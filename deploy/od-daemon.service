@@ -1,0 +1,16 @@
+[Unit]
+Description=Open Design Daemon - AI Design Tool
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/open-design/apps/daemon
+ExecStart=/usr/bin/node dist/cli.js --no-open
+Restart=on-failure
+RestartSec=10
+Environment=PORT=7456
+Environment=PATH=/root/.hermes/node/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target
