@@ -66,13 +66,17 @@ def test_signal_worker_generate() -> None:
 
 
 def test_signal_worker_send() -> None:
+    from unittest.mock import patch
     from nami_workers.signal_worker import send_signal
-    result = send_signal({
-        "action": "send_signal",
-        "signal": {"signal": "XAU/USD Long", "reason": "breakout", "confidence": "Medium", "symbol": "XAU/USD", "price": "2340", "direction": "Long", "timeframe": "Day", "risk_level": "Medium", "invalidation": "Below 2320", "date": "2026-05-05"},
-        "channel": "test",
-    })
-    assert result["sent"] is True
+
+    # Mock telegram_send to avoid needing a real token
+    with patch("nami_workers.signal_worker.telegram_send", return_value={"ok": True}):
+        result = send_signal({
+            "action": "send_signal",
+            "signal": {"signal": "XAU/USD Long", "reason": "breakout", "confidence": "Medium", "symbol": "XAU/USD", "price": "2340", "direction": "Long", "timeframe": "Day", "risk_level": "Medium", "invalidation": "Below 2320", "date": "2026-05-05"},
+            "channel": "test",
+        })
+        assert result["sent"] is True
 
 
 def test_signal_worker_quality_blocks_guarantee() -> None:

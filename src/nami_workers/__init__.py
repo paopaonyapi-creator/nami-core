@@ -6,6 +6,7 @@ by HarnessRuntime for safety, quality, and audit.
 """
 
 from .registry import WorkerRegistry, register_worker, get_worker
+from .utils import ai_chat_completion, telegram_send, oanda_paper_trade
 from .signal_worker import signal_worker
 from .proxy_worker import proxy_worker
 from .lottery_worker import lottery_worker

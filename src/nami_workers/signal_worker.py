@@ -19,10 +19,33 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
+from .utils import ai_chat_completion, telegram_send
+
 logger = logging.getLogger(__name__)
 
-# Signal format template (from NAMI_PREMIUM_BIBLE)
-SIGNAL_TEMPLATE = """Nami Premium Signal — {date}
+SIGNAL_SYSTEM_PROMPT = """You are a professional market analyst AI.
+Analyze the given symbol and provide a trading signal.
+
+You MUST respond in this exact JSON format:
+{
+  "symbol": "XAU/USD",
+  "price": "current_or_estimated_price",
+  "direction": "Long" or "Short" or "No Trade",
+  "confidence": "High" or "Medium" or "Low",
+  "timeframe": "Day" or "4H" or "1H",
+  "reasons": ["reason 1", "reason 2", "reason 3"],
+  "risk_level": "High" or "Medium" or "Low",
+  "invalidation": "price level where trade is invalidated"
+}
+
+Rules:
+- Only give High confidence when 3+ confluences align
+- Always include risk_level and invalidation
+- Never use words like "guarantee", "sure", "certain"
+- If no clear setup exists, set direction to "No Trade"
+"""
+
+SIGNAL_TEMPLATE = """🔔 Nami Premium Signal — {date}
 
 Symbol: {symbol} @{price}
 Direction: {direction}
@@ -43,41 +66,6 @@ NO_SIGNAL_TEMPLATE = """วันนี้ไม่มีสัญญาณท�
 รอ setup ที่ดีกว่าดีกว่า forcing trade ครับ"""
 
 
-def _load_ai_config() -> dict[str, Any]:
-    """Load AI provider config from /etc/nami-harness/ai_config.json."""
-    config_path = os.environ.get(
-        "AI_CONFIG_PATH",
-        "/etc/nami-harness/ai_config.json",
-    )
-    try:
-        with open(config_path, encoding="utf-8") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        logger.warning("AI config not found at %s, using defaults", config_path)
-        return {}
-
-
-def _call_ai(prompt: str, config: dict[str, Any]) -> str:
-    """Call AI provider via maxplus-proxy or direct API.
-
-    TODO: Replace with actual API call logic from /opt/telegram-premium-bot.
-    Currently returns a placeholder for testing.
-    """
-    proxy_url = os.environ.get("MAXPLUS_PROXY_URL", "http://localhost:8091")
-    # In production, this would call the proxy with the prompt
-    # For now, return structured placeholder
-    return json.dumps({
-        "symbol": "XAU/USD",
-        "price": "2340",
-        "direction": "Long",
-        "confidence": "Medium",
-        "timeframe": "Day",
-        "reasons": ["Breakout above resistance", "Volume confirmation", "Trend alignment"],
-        "risk_level": "Medium",
-        "invalidation": "Below 2320 support",
-    })
-
-
 def generate_signal(payload: dict[str, Any]) -> dict[str, Any]:
     """Generate a market signal using AI analysis.
 
@@ -91,15 +79,34 @@ def generate_signal(payload: dict[str, Any]) -> dict[str, Any]:
     task = payload.get("task", "gold_daily")
     symbol = payload.get("symbol", "XAU/USD")
 
-    config = _load_ai_config()
+    messages = [
+        {"role": "system", "content": SIGNAL_SYSTEM_PROMPT},
+        {"role": "user", "content": f"Analyze {symbol} for {task} trading signal. Current date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"},
+    ]
 
-    prompt = f"Analyze {symbol} for {task} trading signal. Provide direction, confidence, risk level, and invalidation point."
-    ai_response = _call_ai(prompt, config)
+    ai_result = ai_chat_completion(messages, model="claude-3-sonnet")
+    content = ai_result.get("content", "")
 
+    # Parse AI response
     try:
-        data = json.loads(ai_response)
-    except json.JSONDecodeError:
-        data = {"raw": ai_response}
+        json_str = content
+        if "```json" in content:
+            json_str = content.split("```json")[1].split("```")[0]
+        elif "```" in content:
+            json_str = content.split("```")[1].split("```")[0]
+        data = json.loads(json_str.strip())
+    except (json.JSONDecodeError, IndexError):
+        logger.warning("AI response not valid JSON, using fallback")
+        data = {
+            "symbol": symbol,
+            "price": "N/A",
+            "direction": "No Trade",
+            "confidence": "Low",
+            "timeframe": "Day",
+            "reasons": ["AI analysis unavailable"],
+            "risk_level": "High",
+            "invalidation": "N/A",
+        }
 
     now = datetime.now(timezone.utc)
     signal = {
@@ -114,9 +121,10 @@ def generate_signal(payload: dict[str, Any]) -> dict[str, Any]:
         "invalidation": data.get("invalidation", "N/A"),
         "date": now.strftime("%Y-%m-%d"),
         "generated_at": now.isoformat(),
+        "ai_provider": ai_result.get("provider", "unknown"),
     }
 
-    logger.info("Signal generated: %s %s", signal["symbol"], signal["direction"])
+    logger.info("Signal generated: %s %s (%s)", signal["symbol"], signal["direction"], signal["confidence"])
     return signal
 
 
@@ -138,22 +146,30 @@ def send_signal(payload: dict[str, Any]) -> dict[str, Any]:
     if not channel:
         return {"sent": False, "message": "No target channel configured"}
 
-    message = SIGNAL_TEMPLATE.format(
-        date=signal_data.get("date", "N/A"),
-        symbol=signal_data.get("symbol", "N/A"),
-        price=signal_data.get("price", "N/A"),
-        direction=signal_data.get("direction", "N/A"),
-        confidence=signal_data.get("confidence", "N/A"),
-        timeframe=signal_data.get("timeframe", "N/A"),
-        reasons=signal_data.get("reason", "• N/A"),
-        risk_level=signal_data.get("risk_level", "N/A"),
-        invalidation=signal_data.get("invalidation", "N/A"),
-    )
+    direction = signal_data.get("direction", "N/A")
+    if direction == "No Trade":
+        message = NO_SIGNAL_TEMPLATE.format(reason="No high-confidence setup found today")
+    else:
+        message = SIGNAL_TEMPLATE.format(
+            date=signal_data.get("date", "N/A"),
+            symbol=signal_data.get("symbol", "N/A"),
+            price=signal_data.get("price", "N/A"),
+            direction=direction,
+            confidence=signal_data.get("confidence", "N/A"),
+            timeframe=signal_data.get("timeframe", "N/A"),
+            reasons=signal_data.get("reason", "• N/A"),
+            risk_level=signal_data.get("risk_level", "N/A"),
+            invalidation=signal_data.get("invalidation", "N/A"),
+        )
 
-    # TODO: Replace with actual Telegram API call
-    # bot_token from /etc/nami-harness/telegram.env
-    logger.info("Signal sent to channel %s", channel)
-    return {"sent": True, "message": message, "channel": channel}
+    result = telegram_send(channel, message)
+
+    if result.get("ok"):
+        logger.info("Signal sent to channel %s", channel)
+        return {"sent": True, "message": message, "channel": channel}
+    else:
+        logger.error("Signal send failed: %s", result.get("error"))
+        return {"sent": False, "message": f"Send failed: {result.get('error')}", "channel": channel}
 
 
 def send_dm(payload: dict[str, Any]) -> dict[str, Any]:
@@ -171,12 +187,15 @@ def send_dm(payload: dict[str, Any]) -> dict[str, Any]:
     if not user_id or not text:
         return {"sent": False, "message": "Missing user_id or text"}
 
-    # TODO: Replace with actual Telegram API call
-    logger.info("DM sent to user %s", user_id)
-    return {"sent": True, "user_id": user_id}
+    result = telegram_send(str(user_id), text)
+
+    if result.get("ok"):
+        logger.info("DM sent to user %s", user_id)
+        return {"sent": True, "user_id": user_id}
+    else:
+        return {"sent": False, "user_id": user_id, "error": result.get("error")}
 
 
-# Worker dispatch table
 ACTIONS: dict[str, callable] = {
     "generate_signal": generate_signal,
     "send_signal": send_signal,

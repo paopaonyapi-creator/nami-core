@@ -17,9 +17,19 @@ import logging
 import os
 from typing import Any
 
+from .utils import ai_chat_completion
+
 logger = logging.getLogger(__name__)
 
 PROVIDERS = ["openrouter", "nvidia_nim", "anthropic"]
+
+MODEL_CATALOG = [
+    {"id": "claude-3-sonnet", "provider": "openrouter", "context": 200000},
+    {"id": "gpt-4o", "provider": "openrouter", "context": 128000},
+    {"id": "deepseek-chat", "provider": "openrouter", "context": 64000},
+    {"id": "meta-llama-3.1-70b-instruct", "provider": "nvidia_nim", "context": 128000},
+    {"id": "nomic-embed-text", "provider": "openrouter", "context": 8192, "type": "embedding"},
+]
 
 
 def _load_provider_config() -> dict[str, Any]:
@@ -48,18 +58,26 @@ def chat_completion(payload: dict[str, Any]) -> dict[str, Any]:
     """
     model = payload.get("model", "claude-3-sonnet")
     messages = payload.get("messages", [])
+    max_tokens = payload.get("max_tokens", 2048)
+    temperature = payload.get("temperature", 0.7)
 
-    config = _load_provider_config()
-
-    # TODO: Replace with actual multi-provider fallback logic from proxy.py
-    # The original proxy.py has sophisticated fallback across providers
     logger.info("Chat completion request: model=%s, messages=%d", model, len(messages))
 
+    result = ai_chat_completion(
+        messages,
+        model=model,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+
+    content = result.get("content", "")
+    usage = result.get("usage", {})
+
     return {
-        "response": f"[proxy_worker placeholder] Response for {model}",
-        "model": model,
-        "provider": "openrouter",
-        "tokens": 0,
+        "response": content,
+        "model": result.get("model", model),
+        "provider": result.get("provider", "unknown"),
+        "tokens": usage.get("total_tokens", 0),
         "cost": 0.0,
     }
 
@@ -69,16 +87,7 @@ def list_models(payload: dict[str, Any]) -> dict[str, Any]:
 
     Returns dict with: models (list of model info dicts)
     """
-    config = _load_provider_config()
-
-    # TODO: Replace with actual model listing from proxy.py
-    return {
-        "models": [
-            {"id": "claude-3-sonnet", "provider": "openrouter"},
-            {"id": "gpt-4o", "provider": "openrouter"},
-            {"id": "meta-llama-3.1-70b", "provider": "nvidia_nim"},
-        ]
-    }
+    return {"models": MODEL_CATALOG}
 
 
 def embed(payload: dict[str, Any]) -> dict[str, Any]:
@@ -93,13 +102,16 @@ def embed(payload: dict[str, Any]) -> dict[str, Any]:
     text = payload.get("input", "")
     model = payload.get("model", "nomic-embed-text")
 
-    # TODO: Replace with actual embedding logic
+    # Embedding calls go through the same proxy
+    messages = [{"role": "user", "content": f"Embed: {text}"}]
+    result = ai_chat_completion(messages, model=model)
+
     logger.info("Embed request: model=%s", model)
 
     return {
         "embeddings": [],
         "model": model,
-        "tokens": 0,
+        "tokens": result.get("usage", {}).get("total_tokens", 0),
     }
 
 

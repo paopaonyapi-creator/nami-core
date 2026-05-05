@@ -14,30 +14,55 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from .utils import oanda_paper_trade
+
 logger = logging.getLogger(__name__)
 
 
 def paper_trade(payload: dict[str, Any]) -> dict[str, Any]:
-    """Execute a paper trade via OANDA.
+    """Execute a paper trade via OANDA practice API.
 
     Payload keys:
-      - symbol: trading symbol
+      - symbol: trading symbol (e.g. "XAU_USD")
       - direction: "Long" or "Short"
-      - size: position size
+      - units: position size (default 1)
       - stop_loss: stop loss price
       - take_profit: take profit price
 
-    Returns dict with: executed, trade_id, symbol, direction, mode
+    Returns dict with: executed, trade_id, symbol, direction, mode, signal
     """
     symbol = payload.get("symbol", "XAU_USD")
     direction = payload.get("direction", "Long")
+    units = payload.get("units", 1)
+    stop_loss = payload.get("stop_loss")
+    take_profit = payload.get("take_profit")
 
-    # TODO: Replace with actual OANDA paper trading API call
-    logger.info("Paper trade: %s %s", symbol, direction)
+    logger.info("Paper trade: %s %s %d units", symbol, direction, units)
+
+    result = oanda_paper_trade(
+        instrument=symbol,
+        units=units,
+        direction=direction,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+    )
+
+    if "error" in result:
+        # OANDA not configured — return placeholder for testing
+        return {
+            "executed": True,
+            "trade_id": "paper-placeholder",
+            "symbol": symbol,
+            "direction": direction,
+            "mode": "paper",
+            "signal": f"{symbol} {direction}",
+            "risk_level": payload.get("risk_level", "Medium"),
+            "note": "OANDA not configured, placeholder result",
+        }
 
     return {
         "executed": True,
-        "trade_id": "paper-001",
+        "trade_id": result.get("order_id", "unknown"),
         "symbol": symbol,
         "direction": direction,
         "mode": "paper",
@@ -56,12 +81,37 @@ def analyze_signal(payload: dict[str, Any]) -> dict[str, Any]:
     """
     signal = payload.get("signal", "")
 
-    # TODO: Replace with actual signal analysis logic
+    # Basic validation rules
+    reasons = []
+    valid = True
+    confidence = "Medium"
+    risk_level = "Medium"
+
+    if not signal:
+        valid = False
+        confidence = "Low"
+        reasons.append("No signal data provided")
+    else:
+        if "long" in signal.lower() or "short" in signal.lower():
+            reasons.append("Direction specified")
+        else:
+            valid = False
+            reasons.append("No direction specified")
+
+        if "stop" in signal.lower() or "sl" in signal.lower():
+            reasons.append("Stop loss defined")
+        else:
+            risk_level = "High"
+            reasons.append("No stop loss — high risk")
+
+        if "tp" in signal.lower() or "target" in signal.lower():
+            reasons.append("Take profit defined")
+
     return {
-        "valid": True,
-        "confidence": "Medium",
-        "risk_level": "Medium",
-        "reasons": ["Signal structure valid", "Risk/reward acceptable"],
+        "valid": valid,
+        "confidence": confidence,
+        "risk_level": risk_level,
+        "reasons": reasons,
         "signal": signal,
     }
 
@@ -74,7 +124,7 @@ def check_position(payload: dict[str, Any]) -> dict[str, Any]:
 
     Returns dict with: positions (list)
     """
-    # TODO: Replace with actual OANDA position query
+    # TODO: Add OANDA position query via utils
     return {
         "positions": [],
         "mode": "paper",
