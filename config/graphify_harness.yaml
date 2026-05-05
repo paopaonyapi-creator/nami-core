@@ -1,0 +1,18 @@
+name: graphify
+allowed_agents:
+  - hermes
+allowed_actions:
+  - query
+  - analyze
+  - impact
+max_daily_actions: 1000
+rate_limit:
+  max_events: 30
+  window_seconds: 60
+circuit_breaker:
+  failure_threshold: 5
+quality:
+  require_non_empty: []
+  forbid_terms:
+    - raw_secret
+sensor_path: /var/log/nami-harness/graphify.jsonl

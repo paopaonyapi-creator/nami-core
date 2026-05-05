@@ -1,0 +1,17 @@
+name: bot
+allowed_agents:
+  - hermes
+  - telegram_user
+allowed_actions:
+  - help
+  - status
+  - package_info
+  - subscribe
+max_daily_actions: 5000
+quality:
+  require_non_empty:
+    - answer
+  forbid_terms:
+    - raw_secret
+    - api_key=
+sensor_path: /var/log/nami-harness/bot.jsonl

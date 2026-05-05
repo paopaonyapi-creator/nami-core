@@ -1,0 +1,11 @@
+name: status
+allowed_agents:
+  - hermes
+  - external
+allowed_actions:
+  - health
+  - worker_health
+quality:
+  require_non_empty: []
+  forbid_terms: []
+sensor_path: /var/log/nami-harness/status.jsonl

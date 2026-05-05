@@ -1,0 +1,12 @@
+name: bridge
+allowed_agents:
+  - hermes
+allowed_actions:
+  - relay
+  - subscribe
+max_daily_actions: 10000
+quality:
+  require_non_empty: []
+  forbid_terms:
+    - raw_secret
+sensor_path: /var/log/nami-harness/bridge.jsonl

@@ -1,0 +1,18 @@
+name: gateway
+allowed_agents:
+  - hermes
+  - external
+allowed_actions:
+  - route
+  - health
+max_daily_actions: 50000
+rate_limit:
+  max_events: 100
+  window_seconds: 60
+circuit_breaker:
+  failure_threshold: 10
+quality:
+  require_non_empty: []
+  forbid_terms:
+    - raw_secret
+sensor_path: /var/log/nami-harness/gateway.jsonl
