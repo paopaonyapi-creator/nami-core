@@ -1,0 +1,24 @@
+name: trading
+allowed_agents:
+  - hermes
+allowed_actions:
+  - paper_trade
+  - analyze_signal
+  - check_position
+max_daily_actions: 500
+rate_limit:
+  max_events: 20
+  window_seconds: 60
+kill_switch_path: /etc/nami-harness/kill_trading
+circuit_breaker:
+  failure_threshold: 3
+budget_guard:
+  max_cost: 10.0
+quality:
+  require_non_empty:
+    - signal
+    - risk_level
+  forbid_terms:
+    - guarantee
+    - การันตีกำไร
+sensor_path: /var/log/nami-harness/trading.jsonl

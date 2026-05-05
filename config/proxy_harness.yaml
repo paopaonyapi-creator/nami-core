@@ -1,0 +1,23 @@
+name: proxy
+allowed_agents:
+  - hermes
+  - external
+allowed_actions:
+  - chat_completion
+  - list_models
+  - embed
+max_daily_actions: 10000
+rate_limit:
+  max_events: 60
+  window_seconds: 60
+circuit_breaker:
+  failure_threshold: 10
+budget_guard:
+  max_cost: 50.0
+quality:
+  require_non_empty:
+    - response
+  forbid_terms:
+    - raw_secret
+    - api_key=
+sensor_path: /var/log/nami-harness/proxy.jsonl

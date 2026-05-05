@@ -1,0 +1,27 @@
+[project]
+name = "nami-core"
+version = "0.0.1"
+description = "Unified agentic system: Hermes brain + Harness control layer + worker plugins."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Pao" }]
+license = { text = "MIT" }
+keywords = ["agentic", "harness", "hermes", "rails", "brakes", "sensors", "quality"]
+dependencies = [
+    "pyyaml>=6.0",
+    "psycopg[binary]>=3.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,20 @@
+[Unit]
+Description=Nami Core — Unified Agentic System
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/nami-core
+Environment=PYTHONPATH=/opt/nami-core/src
+Environment=NAMI_CONFIG_DIR=/opt/nami-core/config
+EnvironmentFile=/etc/nami-harness/nami-core.env
+ExecStart=/opt/nami-core/.venv/bin/python -m nami_core.main
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

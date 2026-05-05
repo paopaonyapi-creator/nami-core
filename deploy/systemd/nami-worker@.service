@@ -1,0 +1,21 @@
+[Unit]
+Description=Nami Worker — %i
+After=network.target nami-core.service
+PartOf=nami-core.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/nami-core
+Environment=PYTHONPATH=/opt/nami-core/src
+Environment=NAMI_CONFIG_DIR=/opt/nami-core/config
+Environment=NAMI_WORKER=%i
+EnvironmentFile=/etc/nami-harness/nami-core.env
+ExecStart=/opt/nami-core/.venv/bin/python -m nami_core.worker %i
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,24 @@
+name: lottery
+allowed_agents:
+  - hermes
+allowed_actions:
+  - predict
+  - send_prediction
+  - fetch_results
+max_daily_actions: 200
+rate_limit:
+  max_events: 10
+  window_seconds: 60
+circuit_breaker:
+  failure_threshold: 3
+budget_guard:
+  max_cost: 2.0
+quality:
+  require_non_empty:
+    - prediction
+  forbid_terms:
+    - guarantee
+    - แน่นอน
+    - 100%
+    - การันตี
+sensor_path: /var/log/nami-harness/lottery.jsonl

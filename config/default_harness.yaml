@@ -1,0 +1,13 @@
+name: default
+allowed_agents:
+  - hermes
+allowed_actions: []
+max_daily_actions: 1000
+circuit_breaker:
+  failure_threshold: 5
+quality:
+  require_non_empty: []
+  forbid_terms:
+    - raw_secret
+    - api_key=
+sensor_path: /var/log/nami-harness/default.jsonl

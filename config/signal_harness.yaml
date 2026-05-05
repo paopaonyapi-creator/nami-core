@@ -1,0 +1,26 @@
+name: signal
+allowed_agents:
+  - hermes
+allowed_actions:
+  - generate_signal
+  - send_signal
+  - send_dm
+max_daily_actions: 100
+rate_limit:
+  max_events: 30
+  window_seconds: 60
+kill_switch_path: /etc/nami-harness/kill_signal
+circuit_breaker:
+  failure_threshold: 5
+budget_guard:
+  max_cost: 5.0
+quality:
+  require_non_empty:
+    - signal
+    - reason
+  forbid_terms:
+    - guarantee
+    - แน่นอน
+    - 100%
+    - การันตีกำไร
+sensor_path: /var/log/nami-harness/signals.jsonl
