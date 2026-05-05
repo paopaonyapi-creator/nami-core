@@ -75,7 +75,13 @@ def _get_ai_config() -> dict[str, Any]:
     )
     try:
         with open(config_path, encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+        # Some old configs store just a key string
+        if isinstance(data, str):
+            return {"openrouter": {"api_key": data.strip()}}
+        return {}
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
@@ -122,7 +128,8 @@ def ai_chat_completion(
 
     # Fallback: direct OpenRouter API
     config = _get_ai_config()
-    openrouter_key = config.get("openrouter", {}).get("api_key", "")
+    or_val = config.get("openrouter", {})
+    openrouter_key = or_val if isinstance(or_val, str) else or_val.get("api_key", "")
     if not openrouter_key:
         return {"content": "", "model": model, "provider": "none", "usage": {}, "error": "no_api_key"}
 
