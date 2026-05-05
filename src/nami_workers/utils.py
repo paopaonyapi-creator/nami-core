@@ -33,12 +33,12 @@ def _get_telegram_token() -> str:
         return os.environ.get("TELEGRAM_BOT_TOKEN", "")
 
 
-def telegram_send(chat_id: str, text: str, *, parse_mode: str = "HTML") -> dict[str, Any]:
+def telegram_send(chat_id: str, text: str, *, parse_mode: str = "HTML", bot_token: str = "") -> dict[str, Any]:
     """Send a message via Telegram Bot API.
 
     Returns the API response as a dict, or {"ok": False, "error": ...} on failure.
     """
-    token = _get_telegram_token()
+    token = bot_token or _get_telegram_token()
     if not token:
         logger.warning("No Telegram token configured")
         return {"ok": False, "error": "no_token"}
