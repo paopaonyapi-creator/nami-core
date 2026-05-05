@@ -52,8 +52,9 @@ def _lao_db_query(sql: str) -> list[dict[str, Any]] | None:
         logger.warning("No DB password found at %s", LAO_DB_PASS_FILE)
         return None
     env = {**os.environ, "PGPASSWORD": pw}
+    # Use -P footer=off and parse header row for column names
     cmd = ["psql", "-h", LAO_DB_HOST, "-U", LAO_DB_USER, "-d", LAO_DB_NAME,
-           "-t", "-A", "-F", "|", "-c", sql]
+           "-A", "-F", "|", "-P", "footer=off", "-c", sql]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=15)
         if r.returncode != 0:
@@ -62,14 +63,15 @@ def _lao_db_query(sql: str) -> list[dict[str, Any]] | None:
         lines = [l for l in r.stdout.strip().split("\n") if l]
         if not lines:
             return []
-        cols = [c.strip() for c in lines[0].split("|")] if "|" in lines[0] else []
+        # First line is column headers, rest are data rows
+        cols = [c.strip() for c in lines[0].split("|")]
         result = []
-        for line in lines:
+        for line in lines[1:]:
             vals = [v.strip() for v in line.split("|")]
-            if len(vals) == len(cols) and cols:
-                result.append(dict(zip(cols, vals)))
-            else:
-                result.append({"raw": line})
+            row = {}
+            for i, col in enumerate(cols):
+                row[col] = vals[i] if i < len(vals) else ""
+            result.append(row)
         return result
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
         logger.warning("DB query failed: %s", e)
