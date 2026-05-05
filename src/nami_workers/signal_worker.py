@@ -17,11 +17,52 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from .utils import ai_chat_completion, telegram_send
 
 logger = logging.getLogger(__name__)
+
+# ── VPS Price Data (from /opt/telegram-premium/signals_bot.py) ──
+PRICES_FILE = os.environ.get(
+    "PRICES_FILE", os.path.expanduser("~/.hermes/scraper/prices.json")
+)
+MIROSHARK_OUTPUT = os.environ.get(
+    "MIROSHARK_OUTPUT", os.path.expanduser("~/.hermes/scraper/miroshark_output")
+)
+
+
+def read_prices() -> dict[str, Any]:
+    """Read live gold/crypto prices from scraper data (VPS: /opt/telegram-premium)."""
+    try:
+        with open(PRICES_FILE) as f:
+            data = json.load(f)
+        hs = data.get("gold", {}).get("Huasengheng", {})
+        crypto = data.get("crypto", {}).get("data", {})
+        return {
+            "timestamp": data.get("timestamp", "")[:19],
+            "spot_usd": hs.get("gold_spot_usd"),
+            "buy_thb": hs.get("gold_buy_thb"),
+            "sell_thb": hs.get("gold_sell_thb"),
+            "btc_usd": crypto.get("BTC", {}).get("price_usd") if isinstance(crypto, dict) else None,
+        }
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def read_miroshark_briefings() -> list[dict[str, Any]]:
+    """Read latest MiroShark gold briefings (VPS: /opt/MiroShark output)."""
+    briefings = []
+    path = Path(MIROSHARK_OUTPUT)
+    if not path.exists():
+        return briefings
+    for f in sorted(path.glob("gold_briefing_*.json"))[-3:]:
+        try:
+            briefings.append(json.loads(f.read_text()))
+        except (json.JSONDecodeError, OSError):
+            continue
+    return briefings
 
 SIGNAL_SYSTEM_PROMPT = """You are a professional market analyst AI.
 Analyze the given symbol and provide a trading signal.
@@ -79,9 +120,19 @@ def generate_signal(payload: dict[str, Any]) -> dict[str, Any]:
     task = payload.get("task", "gold_daily")
     symbol = payload.get("symbol", "XAU/USD")
 
+    # Enrich with real VPS price data if available
+    prices = read_prices()
+    briefings = read_miroshark_briefings()
+    context_parts = [f"Analyze {symbol} for {task} trading signal. Current date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"]
+    if prices:
+        context_parts.append(f"\nLive prices: Gold spot ${prices.get('spot_usd', 'N/A')}, Buy ฿{prices.get('buy_thb', 'N/A')}, Sell ฿{prices.get('sell_thb', 'N/A')}, BTC ${prices.get('btc_usd', 'N/A')}")
+    if briefings:
+        latest = briefings[-1]
+        context_parts.append(f"\nLatest MiroShark briefing: {json.dumps(latest.get('prediction', {}), ensure_ascii=False)[:500]}")
+
     messages = [
         {"role": "system", "content": SIGNAL_SYSTEM_PROMPT},
-        {"role": "user", "content": f"Analyze {symbol} for {task} trading signal. Current date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"},
+        {"role": "user", "content": "\n".join(context_parts)},
     ]
 
     ai_result = ai_chat_completion(messages, model="claude-3-sonnet")
