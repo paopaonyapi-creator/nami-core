@@ -1,0 +1,16 @@
+name: gold
+allowed_agents:
+  - hermes
+allowed_actions:
+  - prices
+  - signal
+  - analysis
+max_daily_actions: 200
+rate_limit:
+  max_events: 30
+  window_seconds: 60
+circuit_breaker:
+  failure_threshold: 5
+budget_guard:
+  max_cost: 5.0
+sensor_path: /var/log/nami-harness/gold.jsonl

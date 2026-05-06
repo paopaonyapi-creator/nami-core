@@ -58,6 +58,22 @@ SCHEDULES: list[dict[str, Any]] = [
         "interval": 1800,
         "description": "Signal generation every 30min",
     },
+    {
+        "worker": "gold",
+        "action": "prices",
+        "payload": {},
+        "interval": 300,
+        "offset": 60,
+        "description": "Gold prices check every 5min",
+    },
+    {
+        "worker": "miroshark",
+        "action": "status",
+        "payload": {},
+        "interval": 600,
+        "offset": 30,
+        "description": "MiroShark Oracle health every 10min",
+    },
 ]
 
 
@@ -234,6 +250,8 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
     from nami_workers.bridge_worker import bridge_worker
     from nami_workers.graphify_worker import graphify_worker
     from nami_workers.bot_worker import bot_worker
+    from nami_workers.miroshark_worker import miroshark_worker
+    from nami_workers.gold_worker import gold_worker
 
     registry.register("lottery", lottery_worker)
     registry.register("signal", signal_worker)
@@ -244,6 +262,8 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
     registry.register("bridge", bridge_worker)
     registry.register("graphify", graphify_worker)
     registry.register("bot", bot_worker)
+    registry.register("miroshark", miroshark_worker)
+    registry.register("gold", gold_worker)
 
     # Load harness configs
     registry.load_from_directory(config_dir)

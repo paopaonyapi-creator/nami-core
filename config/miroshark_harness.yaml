@@ -1,0 +1,16 @@
+name: miroshark
+allowed_agents:
+  - hermes
+allowed_actions:
+  - predict
+  - graph_query
+  - status
+max_daily_actions: 100
+rate_limit:
+  max_events: 20
+  window_seconds: 60
+circuit_breaker:
+  failure_threshold: 5
+budget_guard:
+  max_cost: 10.0
+sensor_path: /var/log/nami-harness/miroshark.jsonl
