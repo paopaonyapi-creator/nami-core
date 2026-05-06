@@ -156,7 +156,7 @@ export default function Dashboard() {
   const [workers, setWorkers] = useState<WorkerInfo[]>([]);
   const [metrics, setMetrics] = useState<Record<string, number>>({});
   const [audit, setAudit] = useState<AuditEntry[]>([]);
-  const [wsState, setWsState] = useState<"on" | "off" | "wait">("off");
+  const [wsState, setWsState] = useState<"on" | "off" | "wait">("wait");
   const [lastUpdate, setLastUpdate] = useState("—");
   const [healthOk, setHealthOk] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -179,16 +179,18 @@ export default function Dashboard() {
     try {
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
-      setWsState("wait");
       ws.onopen = () => setWsState("on");
       ws.onclose = () => setWsState("off");
       ws.onmessage = () => { setLastUpdate(new Date().toLocaleTimeString() + " ⚡"); setTimeout(refresh, 1000); };
-    } catch { setWsState("off"); }
+    } catch { /* WS unavailable — wsState stays "wait" until onclose fires */ }
     return () => { wsRef.current?.close(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => { refresh(); const id = setInterval(refresh, 60000); return () => clearInterval(id); }, [refresh]);
+  useEffect(() => { const id = setInterval(refresh, 60000); return () => clearInterval(id); }, [refresh]);
+
+  // Initial data fetch (deferred to avoid cascading renders)
+  useEffect(() => { queueMicrotask(() => refresh()); }, [refresh]);
 
   const toggleTheme = () => {
     setDark(d => {
