@@ -80,3 +80,32 @@ class NamiClient:
             "event": event,
             "data": data or {},
         })
+
+    def audit(self, limit: int = 50) -> dict[str, Any]:
+        """Get recent audit log entries."""
+        return self._get(f"/audit?limit={limit}")
+
+    def rotate_key(self, new_key: str) -> dict[str, Any]:
+        """Rotate the API key. Requires current key auth."""
+        return self._post("/rotate-key", {"new_key": new_key})
+
+    def scheduler_run_now(self, job: str) -> dict[str, Any]:
+        """Force-run a scheduled job by key (e.g. 'status:health')."""
+        return self.dispatch("scheduler", "run_now", {"job": job})
+
+    def cron_schedule(self, worker: str, action: str, run_at: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Schedule a one-off cron job. run_at is ISO format datetime."""
+        return self.dispatch("cron", "schedule", {
+            "worker": worker,
+            "cron_action": action,
+            "run_at": run_at,
+            "job_payload": payload or {},
+        })
+
+    def cron_list(self, status: str = "pending") -> dict[str, Any]:
+        """List cron jobs by status."""
+        return self.dispatch("cron", "list", {"status": status})
+
+    def cron_cancel(self, job_id: int) -> dict[str, Any]:
+        """Cancel a pending cron job."""
+        return self.dispatch("cron", "cancel", {"job_id": job_id})

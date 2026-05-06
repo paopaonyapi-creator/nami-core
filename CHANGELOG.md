@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.0 — 2026-05-06
+
+### Added
+
+- SDK v2: NamiAsyncClient (httpx-based), NamiWSListener (auto-reconnect WS)
+- SDK new methods: audit(), rotate_key(), scheduler_run_now(), cron_schedule(), cron_list(), cron_cancel()
+- Email worker: SMTP send, batch, templates
+- Webhook relay worker: register, unregister, list, trigger external URLs
+- Pipeline worker: transform, aggregate, export (JSON/CSV/summary)
+- Locust load test script (deploy/locustfile.py)
+- CI/CD v2: coverage report, health check on deploy, auto-release on tag push
+- 19 workers total (was 16)
+
+### Changed
+
+- CI test matrix: Python 3.11 + 3.12 (dropped 3.13)
+- Deploy script now runs pip install + health check
+
 ## 0.5.0 — 2026-05-06
 
 ### Added

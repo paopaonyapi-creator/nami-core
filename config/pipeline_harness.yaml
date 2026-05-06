@@ -1,0 +1,13 @@
+name: pipeline
+description: ETL data transformation pipeline worker
+allowed_actions:
+  - transform
+  - aggregate
+  - export
+rate_limit:
+  max_events: 30
+  window_seconds: 60
+quality:
+  require_non_empty: []
+  forbid_terms:
+    - raw_secret

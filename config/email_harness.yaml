@@ -1,0 +1,13 @@
+name: email
+description: SMTP email sender worker
+allowed_actions:
+  - send
+  - batch
+  - templates
+rate_limit:
+  max_events: 10
+  window_seconds: 60
+quality:
+  require_non_empty: []
+  forbid_terms:
+    - raw_secret

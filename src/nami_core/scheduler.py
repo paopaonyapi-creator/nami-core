@@ -179,6 +179,9 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
     from nami_workers.analytics_worker import analytics_worker
     from nami_workers.scheduler_worker import scheduler_worker, set_scheduler_ref
     from nami_workers.cron_worker import cron_worker, set_hermes_ref, start_cron_checker
+    from nami_workers.email_worker import email_worker
+    from nami_workers.relay_worker import relay_worker
+    from nami_workers.pipeline_worker import pipeline_worker
 
     registry.register("lottery", lottery_worker)
     registry.register("signal", signal_worker)
@@ -195,6 +198,9 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
     registry.register("analytics", analytics_worker)
     registry.register("scheduler", scheduler_worker)
     registry.register("cron", cron_worker)
+    registry.register("email", email_worker)
+    registry.register("relay", relay_worker)
+    registry.register("pipeline", pipeline_worker)
 
     # Load harness configs
     registry.load_from_directory(config_dir)
