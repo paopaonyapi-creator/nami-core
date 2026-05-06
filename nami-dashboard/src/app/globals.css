@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+:root {
+  --gold: #D4AF37;
+  --gold-dim: #8B7225;
+  --dark: #0D0D0D;
+  --dark2: #1A1A2E;
+  --dark3: #16213E;
+  --text: #E0E0E0;
+  --text-dim: #888;
+  --green: #00C853;
+  --red: #FF1744;
+  --orange: #FF9100;
+  --blue: #448AFF;
+}
+
+:root.light {
+  --dark: #F5F5F5;
+  --dark2: #FFFFFF;
+  --dark3: #E8E8E8;
+  --text: #1A1A1A;
+  --text-dim: #666;
+}
+
+@theme inline {
+  --color-background: var(--dark);
+  --color-foreground: var(--text);
+  --font-sans: 'Segoe UI', system-ui, sans-serif;
+}
+
+body {
+  background: var(--dark);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}

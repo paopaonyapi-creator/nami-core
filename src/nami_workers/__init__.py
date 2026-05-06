@@ -16,6 +16,18 @@ from .gateway_worker import gateway_worker
 from .status_worker import status_worker
 from .bridge_worker import bridge_worker
 from .graphify_worker import graphify_worker
+from .miroshark_worker import miroshark_worker
+from .gold_worker import gold_worker
+from .notification_worker import notification_worker
+from .analytics_worker import analytics_worker
+from .scheduler_worker import scheduler_worker
+from .cron_worker import cron_worker
+from .email_worker import email_worker
+from .relay_worker import relay_worker
+from .pipeline_worker import pipeline_worker
+from .ai_chat_worker import ai_chat_worker
+from .sentiment_worker import sentiment_worker
+from .search_worker import search_worker
 
 ALL_WORKERS = {
     "signal": signal_worker,
@@ -27,6 +39,18 @@ ALL_WORKERS = {
     "status": status_worker,
     "bridge": bridge_worker,
     "graphify": graphify_worker,
+    "miroshark": miroshark_worker,
+    "gold": gold_worker,
+    "notification": notification_worker,
+    "analytics": analytics_worker,
+    "scheduler": scheduler_worker,
+    "cron": cron_worker,
+    "email": email_worker,
+    "relay": relay_worker,
+    "pipeline": pipeline_worker,
+    "ai_chat": ai_chat_worker,
+    "sentiment": sentiment_worker,
+    "search": search_worker,
 }
 
 __all__ = [
@@ -43,4 +67,16 @@ __all__ = [
     "status_worker",
     "bridge_worker",
     "graphify_worker",
+    "miroshark_worker",
+    "gold_worker",
+    "notification_worker",
+    "analytics_worker",
+    "scheduler_worker",
+    "cron_worker",
+    "email_worker",
+    "relay_worker",
+    "pipeline_worker",
+    "ai_chat_worker",
+    "sentiment_worker",
+    "search_worker",
 ]

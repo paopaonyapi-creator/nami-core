@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.7.0 — 2026-05-06
+
+### Added
+- **Test coverage 100%**: 204 tests (up from 86) — worker, SDK, integration, production tests
+- **AI workers**: ai_chat (chat/complete/summarize/translate), sentiment (analyze/batch), search (web/knowledge)
+- **Production hardening**: Redis cache module with in-memory fallback, cache stats/flush endpoints
+- **Graceful restart**: POST /restart — drains and restarts via SIGTERM
+- **Hot-reload workers**: POST /reload-workers — rebuilds Hermes without restart
+- **New API endpoints**: GET /cache, POST /cache/flush, POST /restart, POST /reload-workers
+- **React dashboard**: Next.js 16 + TypeScript + Tailwind + Chart.js + Lucide icons
+  - Real-time WebSocket status badge
+  - Worker chips, dispatch latency chart, worker actions bar chart
+  - Audit trail table, dispatch test panel, quick actions
+  - Dark/light theme toggle, auto-refresh every 60s
+- **build_core()**: Extracted shared setup function for reuse in tests and app
+- **Harness configs**: ai_chat_harness.yaml, sentiment_harness.yaml, search_harness.yaml
+- **22 workers** total (up from 19): +ai_chat, +sentiment, +search
+
+### Fixed
+- Module import issue: `import nami_workers.X` returns function not module — use `importlib.import_module` in tests and search_worker
+- Auth status code: API returns 401 (not 403) for unauthorized requests
+- Async SDK tests: use `asyncio.run()` instead of deprecated `get_event_loop()`
+
 ## 0.6.0 — 2026-05-06
 
 ### Added

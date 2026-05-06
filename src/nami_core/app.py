@@ -335,6 +335,48 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         except Exception:
             return {"entries": []}
 
+    @app.get("/cache")
+    async def cache_stats(_auth: str = Depends(verify_api_key)):
+        """Get cache statistics."""
+        from nami_core.cache import stats as cache_stats_fn
+        return cache_stats_fn()
+
+    @app.post("/cache/flush")
+    async def cache_flush(_auth: str = Depends(verify_api_key)):
+        """Flush all cached entries."""
+        from nami_core.cache import flush as cache_flush_fn
+        cache_flush_fn()
+        return {"ok": True, "message": "cache flushed"}
+
+    @app.post("/restart")
+    async def graceful_restart(_auth: str = Depends(verify_api_key)):
+        """Graceful restart: drain connections and restart."""
+        import signal
+        logger.info("Graceful restart requested")
+        # Schedule restart after a short delay to allow response to be sent
+        import threading
+        def _restart():
+            import time
+            time.sleep(1)
+            os.kill(os.getpid(), signal.SIGTERM)
+        threading.Thread(target=_restart, daemon=True).start()
+        return {"ok": True, "message": "restart scheduled in 1s"}
+
+    @app.post("/reload-workers")
+    async def reload_workers(_auth: str = Depends(verify_api_key)):
+        """Hot-reload workers from config directory."""
+        if not app.state.hermes:
+            raise HTTPException(status_code=400, detail="no hermes available")
+        try:
+            from nami_core.scheduler import build_core
+            hermes, _ = build_core()
+            app.state.hermes = hermes
+            workers = hermes.list_workers()
+            logger.info("Workers hot-reloaded: %d workers", len(workers))
+            return {"ok": True, "workers": len(workers)}
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
         await ws_manager.connect(websocket)

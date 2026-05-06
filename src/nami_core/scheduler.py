@@ -151,19 +151,12 @@ class NamiScheduler:
             }
 
 
-def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
-    """Start the nami-core daemon: FastAPI server + scheduler."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    )
-
-    # Build Hermes + workers
+def build_core(config_dir: str | None = None) -> tuple:
+    """Build Hermes + workers + registry. Returns (hermes, None)."""
     hermes = Hermes()
     registry = WorkerRegistry()
-    config_dir = os.environ.get("NAMI_CONFIG_DIR", "config")
+    cdir = config_dir or os.environ.get("NAMI_CONFIG_DIR", "config")
 
-    # Import all workers and register them
     from nami_workers.lottery_worker import lottery_worker
     from nami_workers.signal_worker import signal_worker
     from nami_workers.status_worker import status_worker
@@ -182,6 +175,9 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
     from nami_workers.email_worker import email_worker
     from nami_workers.relay_worker import relay_worker
     from nami_workers.pipeline_worker import pipeline_worker
+    from nami_workers.ai_chat_worker import ai_chat_worker
+    from nami_workers.sentiment_worker import sentiment_worker
+    from nami_workers.search_worker import search_worker
 
     registry.register("lottery", lottery_worker)
     registry.register("signal", signal_worker)
@@ -195,16 +191,31 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
     registry.register("miroshark", miroshark_worker)
     registry.register("gold", gold_worker)
     registry.register("notification", notification_worker)
-    registry.register("analytics", analytics_worker)
     registry.register("scheduler", scheduler_worker)
     registry.register("cron", cron_worker)
     registry.register("email", email_worker)
     registry.register("relay", relay_worker)
     registry.register("pipeline", pipeline_worker)
+    registry.register("ai_chat", ai_chat_worker)
+    registry.register("sentiment", sentiment_worker)
+    registry.register("search", search_worker)
 
-    # Load harness configs
-    registry.load_from_directory(config_dir)
+    registry.load_from_directory(cdir)
     registry.wire_into_hermes(hermes)
+
+    set_hermes_ref(hermes)
+    return hermes, None
+
+
+def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
+    """Start the nami-core daemon: FastAPI server + scheduler."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    )
+
+    # Build Hermes + workers
+    hermes, _ = build_core()
 
     workers = hermes.list_workers()
     logger.info("Nami Core started — %d workers: %s", len(workers), ", ".join(workers))

@@ -1,0 +1,12 @@
+name: search
+description: Web search and knowledge retrieval worker
+allowed_actions:
+  - web
+  - knowledge
+rate_limit:
+  max_events: 15
+  window_seconds: 60
+quality:
+  require_non_empty: []
+  forbid_terms:
+    - raw_secret

@@ -1,0 +1,14 @@
+name: ai_chat
+description: AI chat, completion, summarization, translation worker
+allowed_actions:
+  - chat
+  - complete
+  - summarize
+  - translate_text
+rate_limit:
+  max_events: 20
+  window_seconds: 60
+quality:
+  require_non_empty: []
+  forbid_terms:
+    - raw_secret

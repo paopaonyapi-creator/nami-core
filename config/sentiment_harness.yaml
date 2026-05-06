@@ -1,0 +1,12 @@
+name: sentiment
+description: Text sentiment analysis worker
+allowed_actions:
+  - analyze
+  - batch_analyze
+rate_limit:
+  max_events: 20
+  window_seconds: 60
+quality:
+  require_non_empty: []
+  forbid_terms:
+    - raw_secret
