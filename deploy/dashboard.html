@@ -20,21 +20,27 @@
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--dark); color: var(--text); min-height: 100vh; }
-header { background: linear-gradient(135deg, var(--dark2), var(--dark3)); border-bottom: 2px solid var(--gold-dim); padding: 1rem 2rem; display: flex; align-items: center; justify-content: space-between; }
+header { background: linear-gradient(135deg, var(--dark2), var(--dark3)); border-bottom: 2px solid var(--gold-dim); padding: 1rem 2rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
 header h1 { color: var(--gold); font-size: 1.5rem; }
 header .status { display: flex; gap: 0.5rem; align-items: center; }
 .status-dot { width: 10px; height: 10px; border-radius: 50%; }
 .status-dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .status-dot.down { background: var(--red); box-shadow: 0 0 6px var(--red); }
 main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; }
+@media (max-width: 640px) {
+  .grid { grid-template-columns: 1fr; }
+  header { padding: 0.75rem 1rem; }
+  header h1 { font-size: 1.2rem; }
+  main { padding: 0.75rem; }
+  .card { padding: 1rem; }
+}
 .card { background: var(--dark2); border: 1px solid var(--gold-dim); border-radius: 12px; padding: 1.25rem; }
 .card h2 { color: var(--gold); font-size: 1.1rem; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem; }
 .card h2 .icon { font-size: 1.3rem; }
 .worker-row { display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0; border-bottom: 1px solid rgba(212,175,55,0.1); }
 .worker-row:last-child { border-bottom: none; }
 .worker-name { font-weight: 600; }
-.worker-actions { font-size: 0.8rem; color: var(--text-dim); }
 .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
 .badge.ok { background: rgba(0,200,83,0.15); color: var(--green); }
 .badge.err { background: rgba(255,23,68,0.15); color: var(--red); }
@@ -47,11 +53,15 @@ main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
 .price-box .label { font-size: 0.75rem; color: var(--text-dim); }
 .price-box .value { font-size: 1.3rem; font-weight: 700; color: var(--gold); }
 .svc-row { display: flex; justify-content: space-between; padding: 0.3rem 0; font-size: 0.9rem; }
-.svc-row .name { }
-.svc-row .state { }
 .refresh-btn { background: var(--gold-dim); color: var(--dark); border: none; padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; font-weight: 600; }
 .refresh-btn:hover { background: var(--gold); }
 #last-update { font-size: 0.8rem; color: var(--text-dim); }
+.dispatch-panel { margin-top: 0.5rem; }
+.dispatch-panel select, .dispatch-panel input, .dispatch-panel textarea { background: var(--dark3); color: var(--text); border: 1px solid var(--gold-dim); border-radius: 6px; padding: 0.4rem 0.6rem; font-size: 0.85rem; width: 100%; margin-bottom: 0.4rem; }
+.dispatch-panel textarea { height: 50px; font-family: 'Courier New', monospace; font-size: 0.8rem; }
+.dispatch-panel button { background: var(--gold); color: var(--dark); border: none; padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; font-weight: 600; width: 100%; }
+.dispatch-panel button:hover { background: var(--gold-dim); color: var(--text); }
+.dispatch-result { margin-top: 0.5rem; font-size: 0.75rem; font-family: 'Courier New', monospace; background: var(--dark); padding: 0.5rem; border-radius: 6px; max-height: 180px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -65,46 +75,27 @@ main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
 </header>
 <main>
 <div class="grid">
-  <!-- Workers Card -->
+  <div class="card"><h2><span class="icon">⚙️</span> Workers</h2><div id="workers-list"></div></div>
+  <div class="card"><h2><span class="icon">🎯</span> Lao Lottery VIP</h2><div id="lottery-picks"></div></div>
+  <div class="card"><h2><span class="icon">🔢</span> Hanoi Lottery</h2><div id="hanoi-picks"></div></div>
+  <div class="card"><h2><span class="icon">🥇</span> Gold Prices</h2><div id="gold-prices"></div></div>
+  <div class="card"><h2><span class="icon">📈</span> Paper Trading</h2><div id="trading-status"></div></div>
+  <div class="card"><h2><span class="icon">🖥️</span> VPS Services</h2><div id="services-list"></div></div>
+  <div class="card"><h2><span class="icon">⏰</span> Scheduler</h2><div id="scheduler-info"></div></div>
+  <div class="card"><h2><span class="icon">🦈</span> MiroShark Oracle</h2><div id="miroshark-status"></div></div>
+  <div class="card"><h2><span class="icon">📊</span> API Metrics</h2><div id="metrics-info"></div></div>
   <div class="card">
-    <h2><span class="icon">⚙️</span> Workers</h2>
-    <div id="workers-list"></div>
+    <h2><span class="icon">🚀</span> Dispatch Test</h2>
+    <div class="dispatch-panel">
+      <select id="dispatch-worker" title="Select worker"><option value="">Select worker...</option></select>
+      <input id="dispatch-action" placeholder="Action name" />
+      <textarea id="dispatch-payload" placeholder='{"key": "value"}'>{}</textarea>
+      <button onclick="runDispatch()">▶ Run</button>
+      <div id="dispatch-result" class="dispatch-result" style="display:none"></div>
+    </div>
   </div>
-  <!-- Lottery Card -->
-  <div class="card">
-    <h2><span class="icon">🎯</span> Lao Lottery VIP</h2>
-    <div id="lottery-picks"></div>
-  </div>
-  <!-- Gold Card -->
-  <div class="card">
-    <h2><span class="icon">🥇</span> Gold Prices</h2>
-    <div id="gold-prices"></div>
-  </div>
-  <!-- Services Card -->
-  <div class="card">
-    <h2><span class="icon">🖥️</span> VPS Services</h2>
-    <div id="services-list"></div>
-  </div>
-  <!-- Scheduler Card -->
-  <div class="card">
-    <h2><span class="icon">⏰</span> Scheduler</h2>
-    <div id="scheduler-info"></div>
-  </div>
-  <!-- MiroShark Card -->
-  <div class="card">
-    <h2><span class="icon">🦈</span> MiroShark Oracle</h2>
-    <div id="miroshark-status"></div>
-  </div>
-  <!-- Agent Router Card -->
-  <div class="card">
-    <h2><span class="icon">🤖</span> Agent Router</h2>
-    <div id="agent-router"></div>
-  </div>
-  <!-- Quick Links Card -->
-  <div class="card">
-    <h2><span class="icon">🔗</span> Quick Links</h2>
-    <div id="quick-links"></div>
-  </div>
+  <div class="card"><h2><span class="icon">🤖</span> Agent Router</h2><div id="agent-router"></div></div>
+  <div class="card"><h2><span class="icon">🔗</span> Quick Links</h2><div id="quick-links"></div></div>
 </div>
 </main>
 <script>
@@ -113,21 +104,10 @@ const API = window.location.hostname.includes('nip.io')
   : 'http://127.0.0.1:8092';
 
 async function apiGet(path) {
-  try {
-    const r = await fetch(API + path);
-    return await r.json();
-  } catch(e) { return {error: e.message}; }
+  try { const r = await fetch(API + path); return await r.json(); } catch(e) { return {error: e.message}; }
 }
-
 async function apiDispatch(worker, action, payload={}) {
-  try {
-    const r = await fetch(API + '/dispatch', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({worker, action, payload})
-    });
-    return await r.json();
-  } catch(e) { return {error: e.message}; }
+  try { const r = await fetch(API + '/dispatch', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({worker, action, payload}) }); return await r.json(); } catch(e) { return {error: e.message}; }
 }
 
 async function refresh() {
@@ -136,31 +116,35 @@ async function refresh() {
   dot.className = 'status-dot ' + (health.status === 'ok' ? 'ok' : 'down');
   document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
 
-  // Workers
   const wl = document.getElementById('workers-list');
   wl.innerHTML = '';
-  for (const w of health.workers || []) {
-    const row = document.createElement('div');
-    row.className = 'worker-row';
+  const workerNames = health.workers || [];
+  for (const w of workerNames) {
+    const row = document.createElement('div'); row.className = 'worker-row';
     row.innerHTML = `<span class="worker-name">${w}</span><span class="badge ok">active</span>`;
     wl.appendChild(row);
   }
+  const sel = document.getElementById('dispatch-worker');
+  if (sel.options.length <= 1) { for (const w of workerNames) { const o = document.createElement('option'); o.value = w; o.textContent = w; sel.appendChild(o); } }
 
-  // Lottery
+  // Lao Lottery
   const vip = await apiDispatch('lottery', 'vip', {region: 'lao'});
   const lp = document.getElementById('lottery-picks');
   if (vip.ok && vip.output) {
     const d = vip.output.db_picks || vip.output;
-    const engine = d.engine || '—';
-    const date = (vip.output.target_date || vip.output.date || '').slice(0,10);
+    const engine = d.engine || '—'; const date = (vip.output.target_date || vip.output.date || '').slice(0,10);
     lp.innerHTML = `<div style="margin-bottom:0.5rem;color:var(--text-dim)">${engine} · ${date}</div>` +
-      renderPick('1D วิ่ง', d['1d']) +
-      renderPick('2D หลัก', d['2d_main']) +
-      renderPick('2D รอง', d['2d_secondary']) +
-      renderPick('3D', d['3d']);
-  } else {
-    lp.innerHTML = '<span class="badge warn">unavailable</span>';
-  }
+      renderPick('1D วิ่ง', d['1d']) + renderPick('2D หลัก', d['2d_main']) + renderPick('2D รอง', d['2d_secondary']) + renderPick('3D', d['3d']);
+  } else { lp.innerHTML = '<span class="badge warn">unavailable</span>'; }
+
+  // Hanoi Lottery
+  const hanoi = await apiDispatch('lottery', 'predict', {region: 'hanoi'});
+  const hp = document.getElementById('hanoi-picks');
+  if (hanoi.ok && hanoi.output) {
+    const d = hanoi.output;
+    hp.innerHTML = renderPick('Prediction', d.picks || d.numbers || [d.number || '—']);
+    if (d.date) hp.innerHTML = `<div style="margin-bottom:0.3rem;color:var(--text-dim)">${d.date}</div>` + hp.innerHTML;
+  } else { hp.innerHTML = '<span class="badge warn">unavailable</span>'; }
 
   // Gold
   const gold = await apiDispatch('gold', 'prices');
@@ -168,84 +152,67 @@ async function refresh() {
   if (gold.ok && gold.output && !gold.output.error) {
     const g = gold.output;
     gp.innerHTML = `<div class="price-grid">
-      <div class="price-box"><div class="label">Gold Spot USD</div><div class="value">$${g.spot_usd || '—'}</div></div>
-      <div class="price-box"><div class="label">Gold Spot THB</div><div class="value">฿${g.spot_thb || '—'}</div></div>
-      <div class="price-box"><div class="label">BTC USD</div><div class="value">$${g.btc_usd || '—'}</div></div>
-      <div class="price-box"><div class="label">ETH USD</div><div class="value">$${g.eth_usd || '—'}</div></div>
-    </div><div style="margin-top:0.5rem;font-size:0.75rem;color:var(--text-dim)">${g.timestamp || ''}</div>`;
-  } else {
-    gp.innerHTML = '<span class="badge warn">unavailable</span>';
-  }
+      <div class="price-box"><div class="label">Gold USD</div><div class="value">$${g.spot_usd||'—'}</div></div>
+      <div class="price-box"><div class="label">Gold THB</div><div class="value">฿${g.spot_thb||'—'}</div></div>
+      <div class="price-box"><div class="label">BTC</div><div class="value">$${g.btc_usd||'—'}</div></div>
+      <div class="price-box"><div class="label">ETH</div><div class="value">$${g.eth_usd||'—'}</div></div>
+    </div><div style="margin-top:0.5rem;font-size:0.75rem;color:var(--text-dim)">${g.timestamp||''}</div>`;
+  } else { gp.innerHTML = '<span class="badge warn">unavailable</span>'; }
+
+  // Trading
+  const trade = await apiDispatch('trading', 'positions');
+  const tp = document.getElementById('trading-status');
+  if (trade.ok && trade.output) {
+    const t = trade.output; const pos = t.positions || [];
+    if (pos.length) { tp.innerHTML = pos.map(p => `<div class="worker-row"><span>${p.instrument||p.pair||'—'}</span><span class="badge ${p.unrealizedPL>0?'ok':'err'}">${p.unrealizedPL?(p.unrealizedPL>0?'+':'')+Number(p.unrealizedPL).toFixed(2):'—'}</span></div>`).join(''); }
+    else { tp.innerHTML = `<div class="worker-row"><span>Open positions</span><span>0</span></div>`; if (t.account) tp.innerHTML += `<div class="worker-row"><span>Balance</span><span>$${Number(t.account.balance||0).toFixed(2)}</span></div>`; }
+  } else { tp.innerHTML = '<span class="badge warn">unavailable</span>'; }
 
   // Services
   const svcs = await apiDispatch('status', 'services');
   const sl = document.getElementById('services-list');
-  if (svcs.ok && svcs.output) {
-    sl.innerHTML = '';
-    for (const s of svcs.output.services || []) {
-      const row = document.createElement('div');
-      row.className = 'svc-row';
-      row.innerHTML = `<span class="name">${s.service}</span><span class="badge ${s.active ? 'ok' : 'err'}">${s.status}</span>`;
-      sl.appendChild(row);
-    }
-  }
+  if (svcs.ok && svcs.output) { sl.innerHTML = ''; for (const s of svcs.output.services || []) { const row = document.createElement('div'); row.className = 'svc-row'; row.innerHTML = `<span class="name">${s.service}</span><span class="badge ${s.active?'ok':'err'}">${s.status}</span>`; sl.appendChild(row); } }
 
   // Scheduler
   const sched = health.scheduler || {};
   const si = document.getElementById('scheduler-info');
-  si.innerHTML = `<div class="worker-row"><span>Running</span><span class="badge ${sched.running ? 'ok' : 'err'}">${sched.running ? 'yes' : 'no'}</span></div>
-    <div class="worker-row"><span>Jobs</span><span>${sched.jobs || 0}</span></div>`;
-  for (const [k,v] of Object.entries(sched.last_runs || {})) {
-    const row = document.createElement('div');
-    row.className = 'worker-row';
-    row.innerHTML = `<span style="font-size:0.85rem">${k}</span><span style="font-size:0.75rem;color:var(--text-dim)">${v.slice(11,19)}</span>`;
-    si.appendChild(row);
-  }
+  si.innerHTML = `<div class="worker-row"><span>Running</span><span class="badge ${sched.running?'ok':'err'}">${sched.running?'yes':'no'}</span></div><div class="worker-row"><span>Jobs</span><span>${sched.jobs||0}</span></div>`;
+  for (const [k,v] of Object.entries(sched.last_runs || {})) { const row = document.createElement('div'); row.className = 'worker-row'; row.innerHTML = `<span style="font-size:0.85rem">${k}</span><span style="font-size:0.75rem;color:var(--text-dim)">${v.slice(11,19)}</span>`; si.appendChild(row); }
 
   // MiroShark
   const ms = await apiDispatch('miroshark', 'status');
   const mss = document.getElementById('miroshark-status');
-  if (ms.ok && ms.output) {
-    mss.innerHTML = `<div class="worker-row"><span>Status</span><span class="badge ${ms.output.status === 'ok' ? 'ok' : 'warn'}">${ms.output.status}</span></div>`;
-    if (ms.output.raw) {
-      mss.innerHTML += `<div class="worker-row"><span>MIROSHARK</span><span class="badge ${ms.output.raw.miroshark_connected ? 'ok' : 'err'}">${ms.output.raw.miroshark_connected ? 'connected' : 'disconnected'}</span></div>`;
-    }
-  } else {
-    mss.innerHTML = '<span class="badge warn">unavailable</span>';
-  }
+  if (ms.ok && ms.output) { mss.innerHTML = `<div class="worker-row"><span>Status</span><span class="badge ${ms.output.status==='ok'?'ok':'warn'}">${ms.output.status}</span></div>`; if (ms.output.raw) mss.innerHTML += `<div class="worker-row"><span>MIROSHARK</span><span class="badge ${ms.output.raw.miroshark_connected?'ok':'err'}">${ms.output.raw.miroshark_connected?'connected':'disconnected'}</span></div>`; }
+  else { mss.innerHTML = '<span class="badge warn">unavailable</span>'; }
+
+  // Metrics
+  const metrics = await apiGet('/metrics');
+  const mi = document.getElementById('metrics-info');
+  if (metrics && !metrics.error) { mi.innerHTML = `<div class="worker-row"><span>Requests</span><span>${metrics.nami_core_requests_total||0}</span></div><div class="worker-row"><span>Dispatches</span><span>${metrics.nami_core_dispatch_total||0}</span></div><div class="worker-row"><span>Errors</span><span>${metrics.nami_core_dispatch_errors_total||0}</span></div><div class="worker-row"><span>Avg Latency</span><span>${metrics.nami_core_dispatch_latency_avg_ms||0}ms</span></div><div class="worker-row"><span>P95 Latency</span><span>${metrics.nami_core_dispatch_latency_p95_ms||0}ms</span></div>`; }
+  else { mi.innerHTML = '<span class="badge warn">unavailable</span>'; }
 
   // Agent Router
   const ar = document.getElementById('agent-router');
-  const categories = [
-    {cat:'architecture', icon:'🧠', name:'System Design'},
-    {cat:'coding', icon:'⚡', name:'Feature Dev'},
-    {cat:'quick_fix', icon:'💨', name:'Quick Fix'},
-    {cat:'research', icon:'📚', name:'Research'},
-    {cat:'docs', icon:'📄', name:'Documents'},
-  ];
-  ar.innerHTML = categories.map(c =>
-    `<div class="worker-row"><span>${c.icon} ${c.name}</span><span style="font-size:0.8rem;color:var(--text-dim)">${c.cat}</span></div>`
-  ).join('');
+  ar.innerHTML = [{cat:'architecture',icon:'🧠',name:'System Design'},{cat:'coding',icon:'⚡',name:'Feature Dev'},{cat:'quick_fix',icon:'💨',name:'Quick Fix'},{cat:'research',icon:'📚',name:'Research'},{cat:'docs',icon:'📄',name:'Documents'}].map(c=>`<div class="worker-row"><span>${c.icon} ${c.name}</span><span style="font-size:0.8rem;color:var(--text-dim)">${c.cat}</span></div>`).join('');
 
   // Quick Links
   const ql = document.getElementById('quick-links');
-  const links = [
-    {name:'LaoPatana', url:'https://laopatana.178.104.181.132.nip.io'},
-    {name:'MiroShark', url:'https://miroshark.178.104.181.132.nip.io'},
-    {name:'Gold Signals', url:'https://goldsignalos.178.104.181.132.nip.io'},
-    {name:'Hanoi Stats', url:'https://hanoi.178.104.181.132.nip.io'},
-    {name:'Open Design', url:'https://od.178.104.181.132.nip.io'},
-    {name:'Nami Premium', url:'https://nami-premium-paopaonyza.netlify.app'},
-    {name:'API Docs', url:'https://nami-api.178.104.181.132.nip.io/health'},
-  ];
-  ql.innerHTML = links.map(l =>
-    `<div class="worker-row"><a href="${l.url}" target="_blank" style="color:var(--gold);text-decoration:none">${l.name}</a><span style="font-size:0.7rem;color:var(--text-dim)">↗</span></div>`
-  ).join('');
+  ql.innerHTML = [{name:'LaoPatana',url:'https://laopatana.178.104.181.132.nip.io'},{name:'MiroShark',url:'https://miroshark.178.104.181.132.nip.io'},{name:'Gold Signals',url:'https://goldsignalos.178.104.181.132.nip.io'},{name:'Hanoi Stats',url:'https://hanoi.178.104.181.132.nip.io'},{name:'Open Design',url:'https://od.178.104.181.132.nip.io'},{name:'Nami Premium',url:'https://nami-premium-paopaonyza.netlify.app'},{name:'API Health',url:'https://nami-api.178.104.181.132.nip.io/health'}].map(l=>`<div class="worker-row"><a href="${l.url}" target="_blank" style="color:var(--gold);text-decoration:none">${l.name}</a><span style="font-size:0.7rem;color:var(--text-dim)">↗</span></div>`).join('');
 }
 
-function renderPick(label, nums) {
-  if (!nums || !nums.length) return '';
-  return `<div class="pred-item"><span class="pred-type">${label}</span><span class="pred-num">${nums.join(', ')}</span></div>`;
+function renderPick(label, nums) { if (!nums || !nums.length) return ''; return `<div class="pred-item"><span class="pred-type">${label}</span><span class="pred-num">${nums.join(', ')}</span></div>`; }
+
+async function runDispatch() {
+  const worker = document.getElementById('dispatch-worker').value;
+  const action = document.getElementById('dispatch-action').value;
+  const payloadStr = document.getElementById('dispatch-payload').value;
+  const resultEl = document.getElementById('dispatch-result');
+  resultEl.style.display = 'block';
+  if (!worker || !action) { resultEl.textContent = 'Error: select worker and enter action'; return; }
+  let payload = {}; try { payload = JSON.parse(payloadStr); } catch(e) { resultEl.textContent = 'Invalid JSON'; return; }
+  resultEl.textContent = 'Running...';
+  const result = await apiDispatch(worker, action, payload);
+  resultEl.textContent = JSON.stringify(result, null, 2);
 }
 
 refresh();

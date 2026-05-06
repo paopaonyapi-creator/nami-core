@@ -13,8 +13,8 @@ import logging
 import os
 import signal
 import sys
-import threading
 import time
+import threading
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Any
@@ -154,8 +154,14 @@ class NamiAPIHandler(BaseHTTPRequestHandler):
     hermes: Hermes = None  # type: ignore
     scheduler: NamiScheduler = None  # type: ignore
     api_key: str = ""  # type: ignore
+    # Metrics counters
+    _request_count: int = 0
+    _dispatch_count: int = 0
+    _dispatch_errors: int = 0
+    _dispatch_latency_ms: list[float] = []  # last 100
 
     def do_GET(self) -> None:
+        NamiAPIHandler._request_count += 1
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
         params = parse_qs(parsed.query)
@@ -176,6 +182,8 @@ class NamiAPIHandler(BaseHTTPRequestHandler):
             self._json(200, {"workers": workers})
         elif path == "/scheduler":
             self._json(200, self.scheduler.status())
+        elif path == "/metrics":
+            self._json(200, self._prometheus_metrics())
         else:
             self._json(404, {"error": f"not found: {path}"})
 
@@ -213,12 +221,29 @@ class NamiAPIHandler(BaseHTTPRequestHandler):
                 return
 
             try:
+                t0 = time.monotonic()
                 result = self.hermes.dispatch(worker, action, payload)
-                self._json(200, {"ok": True, "output": result.output})
+                latency = (time.monotonic() - t0) * 1000
+                NamiAPIHandler._dispatch_count += 1
+                NamiAPIHandler._dispatch_latency_ms.append(latency)
+                if len(NamiAPIHandler._dispatch_latency_ms) > 100:
+                    NamiAPIHandler._dispatch_latency_ms = NamiAPIHandler._dispatch_latency_ms[-100:]
+                self._json(200, {"ok": True, "output": result.output, "latency_ms": round(latency, 1)})
             except ValueError as exc:
+                NamiAPIHandler._dispatch_errors += 1
                 self._json(404, {"error": str(exc)})
             except Exception as exc:
+                NamiAPIHandler._dispatch_errors += 1
                 self._json(500, {"error": str(exc)})
+        elif path == "/webhook":
+            body = self._read_body()
+            if body is None:
+                return
+            source = body.get("source", "unknown")
+            event = body.get("event", "ping")
+            data = body.get("data", {})
+            logger.info("Webhook: source=%s event=%s", source, event)
+            self._json(200, {"ok": True, "source": source, "event": event})
         else:
             self._json(404, {"error": f"not found: {path}"})
 
@@ -243,6 +268,22 @@ class NamiAPIHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: Any) -> None:
         logger.debug("API: %s", format % args)
+
+    @classmethod
+    def _prometheus_metrics(cls) -> dict[str, Any]:
+        latencies = cls._dispatch_latency_ms[-100:]
+        avg_lat = sum(latencies) / len(latencies) if latencies else 0
+        p95_lat = sorted(latencies)[int(len(latencies) * 0.95)] if len(latencies) >= 20 else max(latencies) if latencies else 0
+        return {
+            "nami_core_requests_total": cls._request_count,
+            "nami_core_dispatch_total": cls._dispatch_count,
+            "nami_core_dispatch_errors_total": cls._dispatch_errors,
+            "nami_core_dispatch_latency_avg_ms": round(avg_lat, 1),
+            "nami_core_dispatch_latency_p95_ms": round(p95_lat, 1),
+            "nami_core_workers_count": len(cls.hermes.list_workers()),
+            "nami_core_scheduler_running": cls.scheduler.status().get("running", False),
+            "nami_core_scheduler_jobs": cls.scheduler.status().get("jobs", 0),
+        }
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:

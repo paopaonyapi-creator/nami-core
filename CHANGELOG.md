@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.2.0 — 2026-05-06
+
+### Added
+- `GET /metrics` endpoint: request count, dispatch count, errors, avg/p95 latency
+- `POST /webhook` endpoint: external event ingestion (source, event, data)
+- Dispatch latency tracking with rolling 100-sample window
+- `gateway_worker.agent_route` action: AI agent routing (migrated from agent-wrappers)
+- `gateway_worker` routes: `/api/gold`, `/api/miroshark`, `/api/graphify`
+- `graphify_worker.load_graphs` + `list_graphs`: VFS graph data loading
+- Dashboard: Hanoi Lottery card, Paper Trading card, API Metrics card, Dispatch Test panel
+- Dashboard: Mobile responsive CSS (@media max-width 640px)
+- CI/CD: Auto-deploy to VPS on master push with restart verification
+- nami-bot: `nami_core` in PROJECTS, `/logs nami-core`, `/restart nami-core`
+- Secrets: symlinked laopatana-stat-lab.env + hanoi-stats-analyzer.env into /etc/nami-harness/
+
+### Changed
+- CI/CD deploy step now does real restart instead of shadow mode
+- `/dispatch` response includes `latency_ms` field
+
+### Removed
+- Unused /opt/ directories: nami-audit-backups, nami-harness-backups, ecosystem-dashboard
+
+## 0.1.0 — 2026-05-06
+
+### Added
+- Scheduler daemon with 6 periodic jobs
+- HTTP API on port 8092 (GET /health, /workers, /scheduler; POST /dispatch)
+- 12 workers: lottery, signal, status, proxy, trading, gateway, bridge, graphify, bot, miroshark, gold, default
+- API key auth on POST /dispatch via NAMI_API_KEY
+- CORS support (OPTIONS handler)
+- Unified dashboard at /dashboard.html
+- nami-bot /vip, /status, /health, /agents routed through nami-core API
+- hanoi-bot fetch_results routed through nami-core API
+- MiroShark Oracle → miroshark_worker
+- Gold Signal OS → gold_worker
+- maxplus-proxy → proxy_worker primary LLM provider
+- Cron cleanup: 28 → 8 entries
+- nginx reverse proxy with SSL for nami-api subdomain
+
 ## 0.0.1 — 2026-05-05
 
 Nami Core: unified agentic system with Hermes brain, Harness control, and 9 worker plugins.

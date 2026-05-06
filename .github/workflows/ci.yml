@@ -37,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy to VPS (shadow mode)
+      - name: Deploy to VPS
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -45,5 +45,8 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             cd /opt/nami-core || git clone https://github.com/paopaonyapi-creator/nami-core.git /opt/nami-core
-            cd /opt/nami-core && git pull
-            bash deploy/vps-setup.sh --shadow
+            cd /opt/nami-core && git checkout -- . && git pull
+            cp deploy/dashboard.html /opt/nami-landing/dashboard.html 2>/dev/null || true
+            systemctl restart nami-core
+            sleep 3
+            systemctl is-active nami-core || (journalctl -u nami-core --no-pager -n 20 && exit 1)
