@@ -3,5 +3,6 @@
   "/_not-found/page": "app/_not-found/page.js",
   "/docs/page": "app/docs/page.js",
   "/favicon.ico/route": "app/favicon.ico/route.js",
-  "/page": "app/page.js"
+  "/page": "app/page.js",
+  "/workers/[name]/page": "app/workers/[name]/page.js"
 }

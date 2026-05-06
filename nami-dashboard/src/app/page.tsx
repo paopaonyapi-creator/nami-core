@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import Link from "next/link";
 import {
   Activity, Cpu, Clock, Moon, Sun, RefreshCw, Zap, Send,
   BarChart3, Shield, Database, Heart, Layers, Radio, AlertCircle, BookOpen, Gauge,
@@ -40,39 +41,37 @@ function MetricCard({ label, value, icon: Icon }: { label: string; value: string
   );
 }
 
-function WorkerHealthCards({ workers }: { workers: WorkerInfo[] }) {
+function WorkerHealthCards({ workers, onAlert }: { workers: WorkerInfo[]; onAlert: (msg: string) => void }) {
   const [healthMap, setHealthMap] = useState<Record<string, WorkerHealth>>({});
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchHealth = async () => {
-      setLoading(true);
-      const results: Record<string, WorkerHealth> = {};
-      await Promise.all(workers.map(async w => {
-        try {
-          const r = await fetch(`${API_BASE}/workers/${w.name}/health`);
-          if (r.ok) results[w.name] = await r.json();
-        } catch { /* skip */ }
-      }));
-      setHealthMap(results);
-      setLoading(false);
-    };
-    if (workers.length > 0) fetchHealth();
-  }, [workers]);
+  const checkHealth = useCallback(async (ws: WorkerInfo[]) => {
+    const results: Record<string, WorkerHealth> = {};
+    const unhealthy: string[] = [];
+    await Promise.all(ws.map(async w => {
+      try {
+        const r = await fetch(`${API_BASE}/workers/${w.name}/health`);
+        if (r.ok) {
+          const h: WorkerHealth = await r.json();
+          results[w.name] = h;
+          if (h.healthy === false) unhealthy.push(w.name);
+        }
+      } catch { /* skip */ }
+    }));
+    setHealthMap(results);
+    if (unhealthy.length > 0) onAlert(`Unhealthy workers: ${unhealthy.join(", ")}`);
+    return results;
+  }, [onAlert]);
 
   useEffect(() => {
-    const id = setInterval(async () => {
-      const results: Record<string, WorkerHealth> = {};
-      await Promise.all(workers.map(async w => {
-        try {
-          const r = await fetch(`${API_BASE}/workers/${w.name}/health`);
-          if (r.ok) results[w.name] = await r.json();
-        } catch { /* skip */ }
-      }));
-      setHealthMap(results);
-    }, 30000);
+    const run = async () => { setLoading(true); await checkHealth(workers); setLoading(false); };
+    if (workers.length > 0) run();
+  }, [workers, checkHealth]);
+
+  useEffect(() => {
+    const id = setInterval(() => checkHealth(workers), 30000);
     return () => clearInterval(id);
-  }, [workers]);
+  }, [workers, checkHealth]);
 
   return (
     <div className="card">
@@ -86,9 +85,9 @@ function WorkerHealthCards({ workers }: { workers: WorkerInfo[] }) {
             const badge = h?.healthy === true ? "bg-green-900/30 text-green-400" : h?.healthy === false ? "bg-red-900/30 text-red-400" : "bg-gray-800 text-gray-400";
             const lat = h?.latency_ms ? `${h.latency_ms.toFixed(0)}ms` : "";
             return (
-              <span key={w.name} className={`chip ${badge}`} title={h?.message || lat}>
+              <Link key={w.name} href={`/workers/${w.name}`} className={`chip ${badge} hover:opacity-80 cursor-pointer`} title={h?.message || lat}>
                 {w.name} {lat && <span className="text-[10px] opacity-60">{lat}</span>}
-              </span>
+              </Link>
             );
           })}
         </div>
@@ -434,7 +433,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 px-6 pb-6">
-        <WorkerHealthCards workers={workers} />
+        <WorkerHealthCards workers={workers} onAlert={setAlert} />
         <WorkerBarChart workers={workers} />
         <LatencyChart entries={audit} />
         <AuditTable entries={audit} />
