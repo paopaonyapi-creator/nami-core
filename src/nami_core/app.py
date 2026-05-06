@@ -329,8 +329,8 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         return {"ok": True, "message": "API key rotated successfully"}
 
     @app.get("/audit")
-    async def audit_trail(limit: int = 50, _auth: str = Depends(verify_api_key)):
-        """Get recent audit log entries."""
+    async def audit_trail(limit: int = 50):
+        """Get recent audit log entries (public read for dashboard)."""
         try:
             conn = sqlite3.connect(AUDIT_DB)
             cur = conn.execute(

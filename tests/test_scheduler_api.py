@@ -141,9 +141,11 @@ class TestFastAPIApp(unittest.TestCase):
         data = resp.json()
         self.assertIn("entries", data)
 
-    def test_audit_requires_auth(self):
+    def test_audit_is_public_read(self):
+        """Audit trail is public read (no auth) for dashboard."""
         resp = self.client.get("/audit")
-        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("entries", resp.json())
 
     def test_rate_limit_on_dispatch(self):
         # Reset rate limiter by creating fresh app

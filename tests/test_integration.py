@@ -122,8 +122,10 @@ def test_audit_endpoint(client):
     assert "entries" in r.json()
 
 def test_audit_no_auth(client):
+    """Audit trail is public read (no auth) for dashboard."""
     r = client.get("/audit")
-    assert r.status_code in (401, 403)
+    assert r.status_code == 200
+    assert "entries" in r.json()
 
 
 # === Webhook ===
