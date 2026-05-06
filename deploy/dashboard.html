@@ -95,6 +95,16 @@ main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
     <h2><span class="icon">🦈</span> MiroShark Oracle</h2>
     <div id="miroshark-status"></div>
   </div>
+  <!-- Agent Router Card -->
+  <div class="card">
+    <h2><span class="icon">🤖</span> Agent Router</h2>
+    <div id="agent-router"></div>
+  </div>
+  <!-- Quick Links Card -->
+  <div class="card">
+    <h2><span class="icon">🔗</span> Quick Links</h2>
+    <div id="quick-links"></div>
+  </div>
 </div>
 </main>
 <script>
@@ -203,6 +213,34 @@ async function refresh() {
   } else {
     mss.innerHTML = '<span class="badge warn">unavailable</span>';
   }
+
+  // Agent Router
+  const ar = document.getElementById('agent-router');
+  const categories = [
+    {cat:'architecture', icon:'🧠', name:'System Design'},
+    {cat:'coding', icon:'⚡', name:'Feature Dev'},
+    {cat:'quick_fix', icon:'💨', name:'Quick Fix'},
+    {cat:'research', icon:'📚', name:'Research'},
+    {cat:'docs', icon:'📄', name:'Documents'},
+  ];
+  ar.innerHTML = categories.map(c =>
+    `<div class="worker-row"><span>${c.icon} ${c.name}</span><span style="font-size:0.8rem;color:var(--text-dim)">${c.cat}</span></div>`
+  ).join('');
+
+  // Quick Links
+  const ql = document.getElementById('quick-links');
+  const links = [
+    {name:'LaoPatana', url:'https://laopatana.178.104.181.132.nip.io'},
+    {name:'MiroShark', url:'https://miroshark.178.104.181.132.nip.io'},
+    {name:'Gold Signals', url:'https://goldsignalos.178.104.181.132.nip.io'},
+    {name:'Hanoi Stats', url:'https://hanoi.178.104.181.132.nip.io'},
+    {name:'Open Design', url:'https://od.178.104.181.132.nip.io'},
+    {name:'Nami Premium', url:'https://nami-premium-paopaonyza.netlify.app'},
+    {name:'API Docs', url:'https://nami-api.178.104.181.132.nip.io/health'},
+  ];
+  ql.innerHTML = links.map(l =>
+    `<div class="worker-row"><a href="${l.url}" target="_blank" style="color:var(--gold);text-decoration:none">${l.name}</a><span style="font-size:0.7rem;color:var(--text-dim)">↗</span></div>`
+  ).join('');
 }
 
 function renderPick(label, nums) {

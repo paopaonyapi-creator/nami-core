@@ -5,6 +5,7 @@ allowed_agents:
 allowed_actions:
   - route
   - health
+  - agent_route
 max_daily_actions: 50000
 rate_limit:
   max_events: 100

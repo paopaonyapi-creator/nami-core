@@ -5,6 +5,8 @@ allowed_actions:
   - query
   - analyze
   - impact
+  - load_graphs
+  - list_graphs
 max_daily_actions: 1000
 rate_limit:
   max_events: 30
