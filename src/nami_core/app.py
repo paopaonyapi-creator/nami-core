@@ -180,7 +180,7 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
     app = FastAPI(
         title="Nami Core API",
         description="Unified agentic system — Hermes brain + Harness control + worker plugins.",
-        version="0.5.0",
+        version="0.8.0",
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
@@ -199,6 +199,8 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
     ws_manager = WSManager()
     dispatch_limiter = RateLimiter(max_requests=60, window_seconds=60)
     read_limiter = RateLimiter(max_requests=120, window_seconds=60)
+    worker_limiters: dict[str, RateLimiter] = {}
+    worker_rate_max = int(os.environ.get("NAMI_DISPATCH_RATE_LIMIT", "30"))
 
     # Store references in app state
     app.state.hermes = hermes
@@ -287,6 +289,12 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         if not req.worker or not req.action:
             raise HTTPException(status_code=400, detail="worker and action required")
 
+        # Per-worker rate limit
+        if req.worker not in worker_limiters:
+            worker_limiters[req.worker] = RateLimiter(max_requests=worker_rate_max, window_seconds=60)
+        if not worker_limiters[req.worker].is_allowed(ip):
+            raise HTTPException(status_code=429, detail=f"rate limit exceeded for worker '{req.worker}'")
+
         try:
             t0 = time.monotonic()
             result = app.state.hermes.dispatch(req.worker, req.action, req.payload)
@@ -341,6 +349,12 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         from nami_core.cache import stats as cache_stats_fn
         return cache_stats_fn()
 
+    @app.get("/db")
+    async def db_stats(_auth: str = Depends(verify_api_key)):
+        """Get database pool statistics."""
+        from nami_core.db import sqlite_stats
+        return sqlite_stats()
+
     @app.post("/cache/flush")
     async def cache_flush(_auth: str = Depends(verify_api_key)):
         """Flush all cached entries."""
@@ -376,6 +390,18 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             return {"ok": True, "workers": len(workers)}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.get("/workers/{name}/rate-limit")
+    async def worker_rate_limit(name: str, _auth: str = Depends(verify_api_key)):
+        """Get rate limit status for a specific worker."""
+        limiter = worker_limiters.get(name)
+        return {
+            "worker": name,
+            "max_requests": worker_rate_max,
+            "window_seconds": 60,
+            "active": limiter is not None,
+            "current_hits": len(limiter._hits) if limiter else 0,
+        }
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):

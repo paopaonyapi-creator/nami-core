@@ -118,3 +118,74 @@ def test_reload_workers_endpoint() -> None:
     r = client.post("/reload-workers", headers={"Authorization": "Bearer test-key"})
     assert r.status_code == 200
     assert r.json()["ok"] is True
+
+
+# === Per-Worker Rate Limit ===
+
+def test_worker_rate_limit_endpoint() -> None:
+    from nami_core.app import create_app
+    from nami_core.hermes import Hermes
+    from nami_harness.runtime import HarnessRuntime, HarnessResult, HarnessContext
+    from fastapi.testclient import TestClient
+
+    hermes = Hermes()
+    mock_runtime = MagicMock(spec=HarnessRuntime)
+    mock_ctx = HarnessContext(agent="hermes", action="echo", estimated_cost=0, correlation_id="")
+    mock_runtime.run.return_value = HarnessResult(context=mock_ctx, output={"echo": "pong"}, passed_quality=True)
+    hermes.register("test", mock_runtime, lambda p: {"echo": p})
+
+    app = create_app(hermes=hermes, scheduler=None, api_key="test-key")
+    client = TestClient(app)
+
+    r = client.get("/workers/test/rate-limit", headers={"Authorization": "Bearer test-key"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["worker"] == "test"
+    assert d["max_requests"] > 0
+
+def test_dispatch_per_worker_rate_limit() -> None:
+    from nami_core.app import create_app
+    from nami_core.hermes import Hermes
+    from nami_harness.runtime import HarnessRuntime, HarnessResult, HarnessContext
+    from fastapi.testclient import TestClient
+
+    hermes = Hermes()
+    mock_runtime = MagicMock(spec=HarnessRuntime)
+    mock_ctx = HarnessContext(agent="hermes", action="echo", estimated_cost=0, correlation_id="")
+    mock_runtime.run.return_value = HarnessResult(context=mock_ctx, output={"echo": "pong"}, passed_quality=True)
+    hermes.register("test", mock_runtime, lambda p: {"echo": p})
+
+    app = create_app(hermes=hermes, scheduler=None, api_key="test-key")
+    client = TestClient(app)
+
+    # First dispatch should succeed
+    r = client.post("/dispatch", json={"worker": "test", "action": "echo", "payload": {}}, headers={"Authorization": "Bearer test-key"})
+    assert r.status_code == 200
+
+
+# === DB Pool ===
+
+def test_sqlite_stats() -> None:
+    from nami_core.db import sqlite_stats
+    s = sqlite_stats()
+    assert "db_path" in s
+    assert "backend" in s
+
+def test_db_endpoint() -> None:
+    from nami_core.app import create_app
+    from nami_core.hermes import Hermes
+    from nami_harness.runtime import HarnessRuntime, HarnessResult, HarnessContext
+    from fastapi.testclient import TestClient
+
+    hermes = Hermes()
+    mock_runtime = MagicMock(spec=HarnessRuntime)
+    mock_ctx = HarnessContext(agent="hermes", action="echo", estimated_cost=0, correlation_id="")
+    mock_runtime.run.return_value = HarnessResult(context=mock_ctx, output={"echo": "pong"}, passed_quality=True)
+    hermes.register("test", mock_runtime, lambda p: {"echo": p})
+
+    app = create_app(hermes=hermes, scheduler=None, api_key="test-key")
+    client = TestClient(app)
+
+    r = client.get("/db", headers={"Authorization": "Bearer test-key"})
+    assert r.status_code == 200
+    assert "db_path" in r.json()

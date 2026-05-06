@@ -178,6 +178,7 @@ def build_core(config_dir: str | None = None) -> tuple:
     from nami_workers.ai_chat_worker import ai_chat_worker
     from nami_workers.sentiment_worker import sentiment_worker
     from nami_workers.search_worker import search_worker
+    from nami_workers.image_worker import image_worker
 
     registry.register("lottery", lottery_worker)
     registry.register("signal", signal_worker)
@@ -199,6 +200,7 @@ def build_core(config_dir: str | None = None) -> tuple:
     registry.register("ai_chat", ai_chat_worker)
     registry.register("sentiment", sentiment_worker)
     registry.register("search", search_worker)
+    registry.register("image", image_worker)
 
     registry.load_from_directory(cdir)
     registry.wire_into_hermes(hermes)

@@ -1,0 +1,25 @@
+name: image
+description: AI image generation and description worker
+version: "0.8.0"
+
+actions:
+  generate:
+    description: Generate image from text prompt
+    params:
+      prompt:
+        type: string
+        required: true
+      size:
+        type: string
+        default: "1024x1024"
+      n:
+        type: integer
+        default: 1
+  describe:
+    description: Describe an image from URL
+    params:
+      image_url:
+        type: string
+        required: true
+  models:
+    description: List available image models

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.0 — 2026-05-06
+
+### Added
+- **AI image worker**: `image_worker` — generate (text→image via DALL-E/OpenRouter), describe (image→text), models
+- **Per-worker rate limits**: configurable via `NAMI_DISPATCH_RATE_LIMIT` env var (default 30/min per worker)
+- **GET /workers/{name}/rate-limit**: view rate limit status per worker
+- **SQLite async pool**: `nami_core.db` — aiosqlite with sync fallback, WAL mode, busy timeout
+- **GET /db**: database pool statistics endpoint
+- **Dashboard deploy script**: `deploy/dashboard-deploy.sh` — VPS systemd + nginx setup
+- **Dashboard standalone output**: `next.config.ts` → `output: "standalone"` for production
+- **CI/CD v3**: Redis service container for tests, dashboard build job, deploy depends on both test+dashboard
+- **23 workers** total (up from 22): +image
+
+### Changed
+- App version bumped from 0.5.0 → 0.8.0
+- Deploy job now depends on both `test` and `dashboard` CI jobs
+- Release job now depends on both `test` and `dashboard` CI jobs
+
 ## 0.7.0 — 2026-05-06
 
 ### Added

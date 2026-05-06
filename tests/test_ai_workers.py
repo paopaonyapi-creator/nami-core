@@ -147,3 +147,37 @@ def test_search_knowledge() -> None:
 def test_search_unknown_action() -> None:
     m = _mod("search_worker")
     assert "error" in m.search_worker({"action": "invalid"})
+
+
+# === Image Worker ===
+
+def test_image_generate_no_prompt() -> None:
+    m = _mod("image_worker")
+    r = m.image_worker({"action": "generate"})
+    assert r["ok"] is False
+    assert "prompt" in r["error"]
+
+def test_image_generate_no_api_key() -> None:
+    m = _mod("image_worker")
+    with patch.object(m, "_get_api_key", return_value=""):
+        r = m.image_worker({"action": "generate", "prompt": "a sunset"})
+        assert r["ok"] is False
+        assert "API key" in r["error"]
+
+def test_image_describe_no_url() -> None:
+    m = _mod("image_worker")
+    r = m.image_worker({"action": "describe"})
+    assert r["ok"] is False
+    assert "image_url" in r["error"]
+
+def test_image_models() -> None:
+    m = _mod("image_worker")
+    r = m.image_worker({"action": "models"})
+    assert r["ok"] is True
+    assert len(r["models"]) >= 2
+
+def test_image_unknown_action() -> None:
+    m = _mod("image_worker")
+    r = m.image_worker({"action": "paint"})
+    assert r["ok"] is False
+    assert "unknown action" in r["error"]

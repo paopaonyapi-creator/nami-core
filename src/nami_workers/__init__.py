@@ -28,6 +28,7 @@ from .pipeline_worker import pipeline_worker
 from .ai_chat_worker import ai_chat_worker
 from .sentiment_worker import sentiment_worker
 from .search_worker import search_worker
+from .image_worker import image_worker
 
 ALL_WORKERS = {
     "signal": signal_worker,
@@ -51,6 +52,7 @@ ALL_WORKERS = {
     "ai_chat": ai_chat_worker,
     "sentiment": sentiment_worker,
     "search": search_worker,
+    "image": image_worker,
 }
 
 __all__ = [
@@ -79,4 +81,5 @@ __all__ = [
     "ai_chat_worker",
     "sentiment_worker",
     "search_worker",
+    "image_worker",
 ]
