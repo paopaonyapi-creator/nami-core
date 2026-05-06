@@ -96,7 +96,7 @@ function WorkerHealthCards({ workers, onAlert }: { workers: WorkerInfo[]; onAler
   );
 }
 
-function DispatchPanel({ workers }: { workers: WorkerInfo[] }) {
+function DispatchPanel({ workers, apiKey }: { workers: WorkerInfo[]; apiKey: string }) {
   const [worker, setWorker] = useState("");
   const [action, setAction] = useState("");
   const [payload, setPayload] = useState("{}");
@@ -106,9 +106,11 @@ function DispatchPanel({ workers }: { workers: WorkerInfo[] }) {
   const runDispatch = async () => {
     setLoading(true);
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
       const r = await fetch(`${API_BASE}/dispatch`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ worker, action, payload: JSON.parse(payload) }),
       });
       setResult(JSON.stringify(await r.json(), null, 2));
@@ -196,7 +198,7 @@ function WorkerBarChart({ workers }: { workers: WorkerInfo[] }) {
   );
 }
 
-function BatchDispatchPanel() {
+function BatchDispatchPanel({ apiKey }: { apiKey: string }) {
   const [items, setItems] = useState('[{"worker":"status","action":"health","payload":{}}]');
   const [results, setResults] = useState<BatchResult[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -205,9 +207,11 @@ function BatchDispatchPanel() {
     setLoading(true);
     try {
       const parsed = JSON.parse(items);
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
       const r = await fetch(`${API_BASE}/dispatch/batch`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ items: parsed }),
       });
       const d = await r.json();
@@ -292,9 +296,8 @@ function SSEEventLog() {
   );
 }
 
-function RateLimitsPanel({ workers }: { workers: WorkerInfo[] }) {
+function RateLimitsPanel({ workers, apiKey }: { workers: WorkerInfo[]; apiKey: string }) {
   const [limits, setLimits] = useState<RateLimitInfo[]>([]);
-  const [apiKey, setApiKey] = useState("");
 
   const fetchLimits = async () => {
     if (!apiKey) return;
@@ -316,10 +319,7 @@ function RateLimitsPanel({ workers }: { workers: WorkerInfo[] }) {
         <Gauge size={16} /> Rate Limits
       </h2>
       <div className="flex flex-col gap-2">
-        <div className="flex gap-2">
-          <input placeholder="API Key" value={apiKey} onChange={e => setApiKey(e.target.value)} type="password" className="input-dark flex-1" aria-label="API Key" />
-          <button onClick={fetchLimits} disabled={!apiKey} className="btn-gold text-xs">Check</button>
-        </div>
+        <button onClick={fetchLimits} disabled={!apiKey} className="btn-gold text-xs">Check rate limits</button>
         {limits.length > 0 && (
           <div className="flex flex-col gap-1">
             {limits.map(l => {
@@ -362,6 +362,7 @@ export default function Dashboard() {
   const [lastUpdate, setLastUpdate] = useState("—");
   const [healthOk, setHealthOk] = useState(false);
   const [alert, setAlert] = useState("");
+  const [apiKey, setApiKey] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
 
   const refresh = useCallback(async () => {
@@ -395,6 +396,18 @@ export default function Dashboard() {
   // Initial data fetch (deferred to avoid cascading renders)
   useEffect(() => { queueMicrotask(() => refresh()); }, [refresh]);
 
+  const saveApiKey = (key: string) => {
+    setApiKey(key);
+    localStorage.setItem("nami_api_key", key);
+  };
+
+  useEffect(() => {
+    const saved = localStorage.getItem("nami_api_key");
+    if (saved) setApiKey(saved);
+  }, []);
+
+  const authHeaders = (): HeadersInit => apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+
   const toggleTheme = () => {
     setDark(d => {
       const next = !d;
@@ -408,6 +421,14 @@ export default function Dashboard() {
       <header className="flex items-center justify-between px-6 py-3 header">
         <h1 className="header-title">🌸 Nami Ecosystem</h1>
         <div className="flex items-center gap-3">
+          <input
+            placeholder="API Key"
+            value={apiKey}
+            onChange={e => saveApiKey(e.target.value)}
+            type="password"
+            className="input-dark w-36 text-xs"
+            aria-label="API Key"
+          />
           <span className={`text-xs px-2 py-0.5 rounded font-semibold ${wsState === "on" ? "bg-green-900/30 text-green-400" : wsState === "wait" ? "bg-orange-900/30 text-orange-400" : "bg-red-900/30 text-red-400"}`}>
             WS {wsState === "on" ? "●" : wsState === "wait" ? "◌" : "○"}
           </span>
@@ -437,19 +458,19 @@ export default function Dashboard() {
         <WorkerBarChart workers={workers} />
         <LatencyChart entries={audit} />
         <AuditTable entries={audit} />
-        <DispatchPanel workers={workers} />
-        <BatchDispatchPanel />
+        <DispatchPanel workers={workers} apiKey={apiKey} />
+        <BatchDispatchPanel apiKey={apiKey} />
         <SSEEventLog />
-        <RateLimitsPanel workers={workers} />
+        <RateLimitsPanel workers={workers} apiKey={apiKey} />
         <div className="card">
           <h2 className="card-title">
             <Database size={16} /> Quick Actions
           </h2>
           <div className="flex flex-col gap-2">
-            <button className="btn-gold-dim" onClick={() => fetch(`${API_BASE}/cache`).then(r => r.json()).then(console.log)}>
+            <button className="btn-gold-dim" onClick={() => fetch(`${API_BASE}/cache`, { headers: authHeaders() }).then(r => r.json()).then(console.log)}>
               Cache Stats
             </button>
-            <button className="btn-gold-dim" onClick={() => fetch(`${API_BASE}/cache/flush`, { method: "POST" }).then(console.log)}>
+            <button className="btn-gold-dim" onClick={() => fetch(`${API_BASE}/cache/flush`, { method: "POST", headers: authHeaders() }).then(console.log)}>
               Flush Cache
             </button>
           </div>
