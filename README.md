@@ -1,5 +1,7 @@
 # Nami Core
 
+![Nami Core Dashboard](docs/img/dashboard-overview.png)
+
 Unified agentic system: **Hermes brain** + **Harness control** + **9 worker plugins**.
 
 ## Core Model
