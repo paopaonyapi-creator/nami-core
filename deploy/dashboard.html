@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nami Ecosystem Dashboard</title>
+<style>
+:root {
+  --gold: #D4AF37;
+  --gold-dim: #8B7225;
+  --dark: #0D0D0D;
+  --dark2: #1A1A2E;
+  --dark3: #16213E;
+  --text: #E0E0E0;
+  --text-dim: #888;
+  --green: #00C853;
+  --red: #FF1744;
+  --orange: #FF9100;
+  --blue: #448AFF;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--dark); color: var(--text); min-height: 100vh; }
+header { background: linear-gradient(135deg, var(--dark2), var(--dark3)); border-bottom: 2px solid var(--gold-dim); padding: 1rem 2rem; display: flex; align-items: center; justify-content: space-between; }
+header h1 { color: var(--gold); font-size: 1.5rem; }
+header .status { display: flex; gap: 0.5rem; align-items: center; }
+.status-dot { width: 10px; height: 10px; border-radius: 50%; }
+.status-dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.status-dot.down { background: var(--red); box-shadow: 0 0 6px var(--red); }
+main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem; }
+.card { background: var(--dark2); border: 1px solid var(--gold-dim); border-radius: 12px; padding: 1.25rem; }
+.card h2 { color: var(--gold); font-size: 1.1rem; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem; }
+.card h2 .icon { font-size: 1.3rem; }
+.worker-row { display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0; border-bottom: 1px solid rgba(212,175,55,0.1); }
+.worker-row:last-child { border-bottom: none; }
+.worker-name { font-weight: 600; }
+.worker-actions { font-size: 0.8rem; color: var(--text-dim); }
+.badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.badge.ok { background: rgba(0,200,83,0.15); color: var(--green); }
+.badge.err { background: rgba(255,23,68,0.15); color: var(--red); }
+.badge.warn { background: rgba(255,145,0,0.15); color: var(--orange); }
+.pred-item { display: flex; justify-content: space-between; padding: 0.3rem 0; }
+.pred-type { color: var(--gold); font-weight: 600; }
+.pred-num { font-family: 'Courier New', monospace; font-size: 1.1rem; letter-spacing: 2px; }
+.price-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+.price-box { background: var(--dark3); border-radius: 8px; padding: 0.75rem; text-align: center; }
+.price-box .label { font-size: 0.75rem; color: var(--text-dim); }
+.price-box .value { font-size: 1.3rem; font-weight: 700; color: var(--gold); }
+.svc-row { display: flex; justify-content: space-between; padding: 0.3rem 0; font-size: 0.9rem; }
+.svc-row .name { }
+.svc-row .state { }
+.refresh-btn { background: var(--gold-dim); color: var(--dark); border: none; padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; font-weight: 600; }
+.refresh-btn:hover { background: var(--gold); }
+#last-update { font-size: 0.8rem; color: var(--text-dim); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🌸 Nami Ecosystem</h1>
+  <div class="status">
+    <span id="last-update">—</span>
+    <div class="status-dot" id="core-dot"></div>
+    <button class="refresh-btn" onclick="refresh()">↻</button>
+  </div>
+</header>
+<main>
+<div class="grid">
+  <!-- Workers Card -->
+  <div class="card">
+    <h2><span class="icon">⚙️</span> Workers</h2>
+    <div id="workers-list"></div>
+  </div>
+  <!-- Lottery Card -->
+  <div class="card">
+    <h2><span class="icon">🎯</span> Lao Lottery VIP</h2>
+    <div id="lottery-picks"></div>
+  </div>
+  <!-- Gold Card -->
+  <div class="card">
+    <h2><span class="icon">🥇</span> Gold Prices</h2>
+    <div id="gold-prices"></div>
+  </div>
+  <!-- Services Card -->
+  <div class="card">
+    <h2><span class="icon">🖥️</span> VPS Services</h2>
+    <div id="services-list"></div>
+  </div>
+  <!-- Scheduler Card -->
+  <div class="card">
+    <h2><span class="icon">⏰</span> Scheduler</h2>
+    <div id="scheduler-info"></div>
+  </div>
+  <!-- MiroShark Card -->
+  <div class="card">
+    <h2><span class="icon">🦈</span> MiroShark Oracle</h2>
+    <div id="miroshark-status"></div>
+  </div>
+</div>
+</main>
+<script>
+const API = window.location.hostname.includes('nip.io')
+  ? `https://${window.location.hostname.replace('dashboard', 'nami-api')}`
+  : 'http://127.0.0.1:8092';
+
+async function apiGet(path) {
+  try {
+    const r = await fetch(API + path);
+    return await r.json();
+  } catch(e) { return {error: e.message}; }
+}
+
+async function apiDispatch(worker, action, payload={}) {
+  try {
+    const r = await fetch(API + '/dispatch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({worker, action, payload})
+    });
+    return await r.json();
+  } catch(e) { return {error: e.message}; }
+}
+
+async function refresh() {
+  const health = await apiGet('/health');
+  const dot = document.getElementById('core-dot');
+  dot.className = 'status-dot ' + (health.status === 'ok' ? 'ok' : 'down');
+  document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+
+  // Workers
+  const wl = document.getElementById('workers-list');
+  wl.innerHTML = '';
+  for (const w of health.workers || []) {
+    const row = document.createElement('div');
+    row.className = 'worker-row';
+    row.innerHTML = `<span class="worker-name">${w}</span><span class="badge ok">active</span>`;
+    wl.appendChild(row);
+  }
+
+  // Lottery
+  const vip = await apiDispatch('lottery', 'vip', {region: 'lao'});
+  const lp = document.getElementById('lottery-picks');
+  if (vip.ok && vip.output) {
+    const d = vip.output.db_picks || vip.output;
+    const engine = d.engine || '—';
+    const date = (vip.output.target_date || vip.output.date || '').slice(0,10);
+    lp.innerHTML = `<div style="margin-bottom:0.5rem;color:var(--text-dim)">${engine} · ${date}</div>` +
+      renderPick('1D วิ่ง', d['1d']) +
+      renderPick('2D หลัก', d['2d_main']) +
+      renderPick('2D รอง', d['2d_secondary']) +
+      renderPick('3D', d['3d']);
+  } else {
+    lp.innerHTML = '<span class="badge warn">unavailable</span>';
+  }
+
+  // Gold
+  const gold = await apiDispatch('gold', 'prices');
+  const gp = document.getElementById('gold-prices');
+  if (gold.ok && gold.output && !gold.output.error) {
+    const g = gold.output;
+    gp.innerHTML = `<div class="price-grid">
+      <div class="price-box"><div class="label">Gold Spot USD</div><div class="value">$${g.spot_usd || '—'}</div></div>
+      <div class="price-box"><div class="label">Gold Spot THB</div><div class="value">฿${g.spot_thb || '—'}</div></div>
+      <div class="price-box"><div class="label">BTC USD</div><div class="value">$${g.btc_usd || '—'}</div></div>
+      <div class="price-box"><div class="label">ETH USD</div><div class="value">$${g.eth_usd || '—'}</div></div>
+    </div><div style="margin-top:0.5rem;font-size:0.75rem;color:var(--text-dim)">${g.timestamp || ''}</div>`;
+  } else {
+    gp.innerHTML = '<span class="badge warn">unavailable</span>';
+  }
+
+  // Services
+  const svcs = await apiDispatch('status', 'services');
+  const sl = document.getElementById('services-list');
+  if (svcs.ok && svcs.output) {
+    sl.innerHTML = '';
+    for (const s of svcs.output.services || []) {
+      const row = document.createElement('div');
+      row.className = 'svc-row';
+      row.innerHTML = `<span class="name">${s.service}</span><span class="badge ${s.active ? 'ok' : 'err'}">${s.status}</span>`;
+      sl.appendChild(row);
+    }
+  }
+
+  // Scheduler
+  const sched = health.scheduler || {};
+  const si = document.getElementById('scheduler-info');
+  si.innerHTML = `<div class="worker-row"><span>Running</span><span class="badge ${sched.running ? 'ok' : 'err'}">${sched.running ? 'yes' : 'no'}</span></div>
+    <div class="worker-row"><span>Jobs</span><span>${sched.jobs || 0}</span></div>`;
+  for (const [k,v] of Object.entries(sched.last_runs || {})) {
+    const row = document.createElement('div');
+    row.className = 'worker-row';
+    row.innerHTML = `<span style="font-size:0.85rem">${k}</span><span style="font-size:0.75rem;color:var(--text-dim)">${v.slice(11,19)}</span>`;
+    si.appendChild(row);
+  }
+
+  // MiroShark
+  const ms = await apiDispatch('miroshark', 'status');
+  const mss = document.getElementById('miroshark-status');
+  if (ms.ok && ms.output) {
+    mss.innerHTML = `<div class="worker-row"><span>Status</span><span class="badge ${ms.output.status === 'ok' ? 'ok' : 'warn'}">${ms.output.status}</span></div>`;
+    if (ms.output.raw) {
+      mss.innerHTML += `<div class="worker-row"><span>MIROSHARK</span><span class="badge ${ms.output.raw.miroshark_connected ? 'ok' : 'err'}">${ms.output.raw.miroshark_connected ? 'connected' : 'disconnected'}</span></div>`;
+    }
+  } else {
+    mss.innerHTML = '<span class="badge warn">unavailable</span>';
+  }
+}
+
+function renderPick(label, nums) {
+  if (!nums || !nums.length) return '';
+  return `<div class="pred-item"><span class="pred-type">${label}</span><span class="pred-num">${nums.join(', ')}</span></div>`;
+}
+
+refresh();
+setInterval(refresh, 60000);
+</script>
+</body>
+</html>
