@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
   Activity, Cpu, Clock, Moon, Sun, RefreshCw, Zap, Send,
-  BarChart3, Shield, Database, Heart, Layers, Radio, AlertCircle, BookOpen, Gauge,
+  BarChart3, Shield, Database, Heart, Layers, Radio, AlertCircle, BookOpen, Gauge, Network, CheckCircle, XCircle,
 } from "lucide-react";
 import {
   Chart as ChartJS,
@@ -131,7 +131,7 @@ function DispatchPanel({ workers, apiKey }: { workers: WorkerInfo[]; apiKey: str
         <input placeholder="Action" value={action} onChange={e => setAction(e.target.value)} className="input-dark" aria-label="Action" />
         <textarea placeholder="{}" value={payload} onChange={e => setPayload(e.target.value)} rows={2} className="input-dark" aria-label="Payload JSON" />
         <button onClick={runDispatch} disabled={loading || !worker || !action} className="btn-gold">
-          {loading ? "Running..." : "▶ Run"}
+          {loading ? "Running..." : "Run"}
         </button>
         {result && <pre className="mt-2 pre-dark">{result}</pre>}
       </div>
@@ -156,8 +156,8 @@ function AuditTable({ entries }: { entries: AuditEntry[] }) {
             {entries.slice(0, 15).map((e, i) => (
               <tr key={i} className="border-b table-row-border">
                 <td className="py-1 px-2">{e.worker}</td><td className="py-1 px-2">{e.action}</td>
-                <td className="py-1 px-2">{e.ok ? "✓" : "✗"}</td>
-                <td className="py-1 px-2">{e.latency_ms?.toFixed(1) ?? "—"}ms</td>
+                <td className="py-1 px-2">{e.ok ? "OK" : "Fail"}</td>
+                <td className="py-1 px-2">{e.latency_ms?.toFixed(1) ?? "--"}ms</td>
                 <td className="py-1 px-2 text-dim">{new Date(e.timestamp).toLocaleTimeString()}</td>
               </tr>
             ))}
@@ -228,7 +228,7 @@ function BatchDispatchPanel({ apiKey }: { apiKey: string }) {
       <div className="flex flex-col gap-2">
         <textarea placeholder='[{"worker":"status","action":"health"}]' value={items} onChange={e => setItems(e.target.value)} rows={3} className="input-dark font-mono text-xs" aria-label="Batch items JSON" />
         <button onClick={runBatch} disabled={loading} className="btn-gold">
-          {loading ? "Running..." : "▶ Run Batch"}
+          {loading ? "Running..." : "Run batch"}
         </button>
         {results && (
           <div className="overflow-x-auto">
@@ -241,8 +241,8 @@ function BatchDispatchPanel({ apiKey }: { apiKey: string }) {
                 {results.map((r, i) => (
                   <tr key={i} className="border-b table-row-border">
                     <td className="py-1 px-2">{r.worker}</td><td className="py-1 px-2">{r.action}</td>
-                    <td className="py-1 px-2">{r.ok ? "✓" : "✗"}</td>
-                    <td className="py-1 px-2">{r.latency_ms?.toFixed(1) ?? "—"}ms</td>
+                    <td className="py-1 px-2">{r.ok ? "OK" : "Fail"}</td>
+                    <td className="py-1 px-2">{r.latency_ms?.toFixed(1) ?? "--"}ms</td>
                   </tr>
                 ))}
               </tbody>
@@ -296,6 +296,92 @@ function SSEEventLog() {
   );
 }
 
+function WorkerTopologyCanvas({ workers, healthOk, wsState }: { workers: WorkerInfo[]; healthOk: boolean; wsState: "on" | "off" | "wait" }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+    canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    const radius = Math.min(rect.width, rect.height) * 0.33;
+    const visibleWorkers = workers.slice(0, 18);
+    const accent = healthOk ? "#27e0a3" : "#ff5f6d";
+
+    ctx.lineWidth = 1;
+    visibleWorkers.forEach((worker, index) => {
+      const angle = (index / Math.max(visibleWorkers.length, 1)) * Math.PI * 2 - Math.PI / 2;
+      const x = centerX + Math.cos(angle) * radius;
+      const y = centerY + Math.sin(angle) * radius;
+      ctx.strokeStyle = "rgba(148, 163, 184, 0.22)";
+      ctx.beginPath();
+      ctx.moveTo(centerX, centerY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+
+      ctx.fillStyle = worker.actions.length > 0 ? "#27e0a3" : "#94a3b8";
+      ctx.beginPath();
+      ctx.arc(x, y, 4 + Math.min(worker.actions.length, 8) * 0.45, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#cbd5e1";
+      ctx.font = "11px Segoe UI, sans-serif";
+      ctx.textAlign = x > centerX ? "left" : "right";
+      ctx.fillText(worker.name, x + (x > centerX ? 9 : -9), y + 4);
+    });
+
+    const pulse = wsState === "on" ? 1 : wsState === "wait" ? 0.65 : 0.35;
+    const gradient = ctx.createRadialGradient(centerX, centerY, 8, centerX, centerY, 58);
+    gradient.addColorStop(0, accent);
+    gradient.addColorStop(1, "rgba(15, 23, 42, 0)");
+    ctx.fillStyle = gradient;
+    ctx.globalAlpha = pulse;
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, 58, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = "#0f172a";
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, 34, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#f8fafc";
+    ctx.font = "600 12px Segoe UI, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Nami Core", centerX, centerY - 2);
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "11px Segoe UI, sans-serif";
+    ctx.fillText(`${workers.length} workers`, centerX, centerY + 14);
+  }, [workers, healthOk, wsState]);
+
+  return (
+    <div className="card lg:col-span-2 canvas-card">
+      <h2 className="card-title">
+        <Network size={16} /> Live Worker Topology
+      </h2>
+      <canvas ref={canvasRef} className="topology-canvas" aria-label="Worker topology canvas" />
+      <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-dim">
+        <span>{workers.length} workers</span>
+        <span>{workers.reduce((sum, worker) => sum + worker.actions.length, 0)} actions</span>
+        <span>WS {wsState}</span>
+      </div>
+    </div>
+  );
+}
 function RateLimitsPanel({ workers, apiKey }: { workers: WorkerInfo[]; apiKey: string }) {
   const [limits, setLimits] = useState<RateLimitInfo[]>([]);
 
@@ -342,13 +428,59 @@ function RateLimitsPanel({ workers, apiKey }: { workers: WorkerInfo[]; apiKey: s
   );
 }
 
+function QuickActionsPanel({ apiKey }: { apiKey: string }) {
+  const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null);
+  const [loading, setLoading] = useState<"cache" | "flush" | null>(null);
+
+  const runAction = async (kind: "cache" | "flush") => {
+    if (!apiKey) {
+      setStatus({ ok: false, message: "Enter an API key before running protected actions." });
+      return;
+    }
+    setLoading(kind);
+    try {
+      const r = await fetch(`${API_BASE}${kind === "cache" ? "/cache" : "/cache/flush"}`, {
+        method: kind === "cache" ? "GET" : "POST",
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      const data = await r.json().catch(() => ({}));
+      setStatus({ ok: r.ok, message: r.ok ? JSON.stringify(data).slice(0, 180) : `Request failed (${r.status})` });
+    } catch (e) {
+      setStatus({ ok: false, message: String(e) });
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  return (
+    <div className="card">
+      <h2 className="card-title">
+        <Database size={16} /> Quick Actions
+      </h2>
+      <div className="flex flex-col gap-2">
+        <button className="btn-gold-dim" disabled={loading !== null} onClick={() => runAction("cache")}>
+          {loading === "cache" ? "Checking..." : "Cache Stats"}
+        </button>
+        <button className="btn-gold-dim" disabled={loading !== null} onClick={() => runAction("flush")}>
+          {loading === "flush" ? "Flushing..." : "Flush Cache"}
+        </button>
+        {status && (
+          <div className={`action-result ${status.ok ? "action-result-ok" : "action-result-bad"}`}>
+            {status.ok ? <CheckCircle size={14} /> : <XCircle size={14} />}
+            <span>{status.message}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 function AlertToast({ message, onClose }: { message: string; onClose: () => void }) {
   if (!message) return null;
   return (
     <div className="fixed bottom-4 right-4 bg-red-900/90 text-red-200 px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 z-50 text-sm">
       <AlertCircle size={16} />
       <span>{message}</span>
-      <button onClick={onClose} className="ml-2 text-red-400 hover:text-white">✕</button>
+      <button onClick={onClose} className="ml-2 text-red-400 hover:text-white" aria-label="Dismiss alert">Close</button>
     </div>
   );
 }
@@ -359,7 +491,7 @@ export default function Dashboard() {
   const [metrics, setMetrics] = useState<Record<string, number>>({});
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [wsState, setWsState] = useState<"on" | "off" | "wait">("wait");
-  const [lastUpdate, setLastUpdate] = useState("—");
+  const [lastUpdate, setLastUpdate] = useState("--");
   const [healthOk, setHealthOk] = useState(false);
   const [alert, setAlert] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -385,8 +517,8 @@ export default function Dashboard() {
       wsRef.current = ws;
       ws.onopen = () => setWsState("on");
       ws.onclose = () => setWsState("off");
-      ws.onmessage = () => { setLastUpdate(new Date().toLocaleTimeString() + " ⚡"); setTimeout(refresh, 1000); };
-    } catch { /* WS unavailable — wsState stays "wait" until onclose fires */ }
+      ws.onmessage = () => { setLastUpdate(`${new Date().toLocaleTimeString()} live`); setTimeout(refresh, 1000); };
+    } catch { /* WS unavailable; wsState stays "wait" until onclose fires */ }
     return () => { wsRef.current?.close(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -405,9 +537,6 @@ export default function Dashboard() {
     const saved = localStorage.getItem("nami_api_key");
     if (saved) setApiKey(saved);
   }, []);
-
-  const authHeaders = (): HeadersInit => apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
-
   const toggleTheme = () => {
     setDark(d => {
       const next = !d;
@@ -419,7 +548,7 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen flex flex-col page-bg">
       <header className="flex items-center justify-between px-6 py-3 header">
-        <h1 className="header-title">🌸 Nami Ecosystem</h1>
+        <div><h1 className="header-title">Nami Ecosystem</h1><p className="text-xs text-dim">Live orchestrator control surface</p></div>
         <div className="flex items-center gap-3">
           <input
             placeholder="API Key"
@@ -430,7 +559,7 @@ export default function Dashboard() {
             aria-label="API Key"
           />
           <span className={`text-xs px-2 py-0.5 rounded font-semibold ${wsState === "on" ? "bg-green-900/30 text-green-400" : wsState === "wait" ? "bg-orange-900/30 text-orange-400" : "bg-red-900/30 text-red-400"}`}>
-            WS {wsState === "on" ? "●" : wsState === "wait" ? "◌" : "○"}
+            WS {wsState === "on" ? "on" : wsState === "wait" ? "wait" : "off"}
           </span>
           <span className="text-xs text-dim">{lastUpdate}</span>
           <span className={`w-2.5 h-2.5 rounded-full inline-block ${healthOk ? "bg-green-500 shadow-[0_0_6px_#00C853]" : "bg-red-500 shadow-[0_0_6px_#FF1744]"}`} />
@@ -454,6 +583,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 px-6 pb-6">
+        <WorkerTopologyCanvas workers={workers} healthOk={healthOk} wsState={wsState} />
         <WorkerHealthCards workers={workers} onAlert={setAlert} />
         <WorkerBarChart workers={workers} />
         <LatencyChart entries={audit} />
@@ -462,19 +592,7 @@ export default function Dashboard() {
         <BatchDispatchPanel apiKey={apiKey} />
         <SSEEventLog />
         <RateLimitsPanel workers={workers} apiKey={apiKey} />
-        <div className="card">
-          <h2 className="card-title">
-            <Database size={16} /> Quick Actions
-          </h2>
-          <div className="flex flex-col gap-2">
-            <button className="btn-gold-dim" onClick={() => fetch(`${API_BASE}/cache`, { headers: authHeaders() }).then(r => r.json()).then(console.log)}>
-              Cache Stats
-            </button>
-            <button className="btn-gold-dim" onClick={() => fetch(`${API_BASE}/cache/flush`, { method: "POST", headers: authHeaders() }).then(console.log)}>
-              Flush Cache
-            </button>
-          </div>
-        </div>
+        <QuickActionsPanel apiKey={apiKey} />
       </div>
       <AlertToast message={alert} onClose={() => setAlert("")} />
     </div>
