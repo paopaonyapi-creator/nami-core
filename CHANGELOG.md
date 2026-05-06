@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.13.0 — 2026-05-06
+
+### Added
+
+- **Nginx Proxy Fix**: Added `/events` (SSE with `proxy_buffering off`), `/workers/` sub-paths, `/webhook/verify`, `/rotate-key`, `/restart`, `/reload-workers`, `/cache/flush` — all endpoints now properly proxied
+- **Rate Limits Panel**: Dashboard card showing per-worker rate limit status with green/yellow/red progress bars, requires API key input
+- **Interactive API Docs**: New `/docs` page — try-it-now for all 18 endpoints, API key stored in localStorage, worker name input for `{name}` paths
+- **Alert Toast**: Fixed-position notification when worker health check fails
+- **API Docs Link**: BookOpen icon in header linking to `/docs`
+
+### Changed
+
+- **App version**: 0.12.0 → 0.13.0
+- **Nginx config**: Split into dedicated locations for SSE, workers, write endpoints
+
 ## 0.12.0 — 2026-05-06
 
 ### Added
