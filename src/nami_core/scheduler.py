@@ -175,6 +175,8 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
     from nami_workers.bot_worker import bot_worker
     from nami_workers.miroshark_worker import miroshark_worker
     from nami_workers.gold_worker import gold_worker
+    from nami_workers.notification_worker import notification_worker
+    from nami_workers.analytics_worker import analytics_worker
 
     registry.register("lottery", lottery_worker)
     registry.register("signal", signal_worker)
@@ -187,6 +189,8 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
     registry.register("bot", bot_worker)
     registry.register("miroshark", miroshark_worker)
     registry.register("gold", gold_worker)
+    registry.register("notification", notification_worker)
+    registry.register("analytics", analytics_worker)
 
     # Load harness configs
     registry.load_from_directory(config_dir)

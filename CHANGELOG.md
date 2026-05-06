@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.0 — 2026-05-06
+
+### Added
+
+- FastAPI + uvicorn async server (replaces HTTPServer + ws.py)
+- WebSocket endpoint at /ws (unified with HTTP on port 8092)
+- Swagger UI at /docs, ReDoc at /redoc, OpenAPI spec at /openapi.json
+- Prometheus text format at /metrics/prometheus
+- Python SDK: `nami_sdk.client.NamiClient` (health, workers, dispatch, webhook, metrics)
+- Notification worker: send/subscribe/unsubscribe (Telegram + webhook channels)
+- Analytics worker: dispatch_log, summary, leaderboard, recent (SQLite-backed)
+- Harness configs for notification + analytics workers
+- `deploy/setup-monitoring.sh` — Prometheus + Grafana one-shot setup
+
+### Changed
+
+- HTTP server upgraded from BaseHTTPRequestHandler to FastAPI
+- WebSocket merged into FastAPI (no separate port 8093)
+- Integration tests use FastAPI TestClient (faster, no threading)
+- 81 tests passing (was 79)
+
 ## 0.3.0 — 2026-05-06
 
 ### Added

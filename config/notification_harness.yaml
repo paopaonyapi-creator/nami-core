@@ -1,0 +1,10 @@
+name: notification
+description: Notification routing worker
+allowed_actions:
+  - send
+  - subscribe
+  - unsubscribe
+  - list
+rate_limit: 60
+quality:
+  max_output_size: 1024

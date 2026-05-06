@@ -1,0 +1,10 @@
+name: analytics
+description: Dispatch analytics and stats worker
+allowed_actions:
+  - dispatch_log
+  - summary
+  - leaderboard
+  - recent
+rate_limit: 120
+quality:
+  max_output_size: 4096
