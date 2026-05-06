@@ -21,6 +21,7 @@ from typing import Any
 from urllib.parse import urlparse, parse_qs
 
 from nami_core.hermes import Hermes
+from nami_core import ws as nami_ws
 from nami_workers.registry import WorkerRegistry
 
 logger = logging.getLogger("nami_core.scheduler")
@@ -133,8 +134,10 @@ class NamiScheduler:
         try:
             result = self.hermes.dispatch(worker, action, payload)
             logger.info("Scheduled job %s: OK — %s", desc, str(result.output)[:200])
+            nami_ws.broadcast("scheduler", {"job": key, "worker": worker, "action": action, "status": "ok"})
         except Exception as exc:
             logger.warning("Scheduled job %s: ERROR — %s", desc, exc)
+            nami_ws.broadcast("scheduler", {"job": key, "worker": worker, "action": action, "status": "error", "error": str(exc)})
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -229,6 +232,7 @@ class NamiAPIHandler(BaseHTTPRequestHandler):
                 if len(NamiAPIHandler._dispatch_latency_ms) > 100:
                     NamiAPIHandler._dispatch_latency_ms = NamiAPIHandler._dispatch_latency_ms[-100:]
                 self._json(200, {"ok": True, "output": result.output, "latency_ms": round(latency, 1)})
+                nami_ws.broadcast("dispatch", {"worker": worker, "action": action, "latency_ms": round(latency, 1)})
             except ValueError as exc:
                 NamiAPIHandler._dispatch_errors += 1
                 self._json(404, {"error": str(exc)})
@@ -243,6 +247,7 @@ class NamiAPIHandler(BaseHTTPRequestHandler):
             event = body.get("event", "ping")
             data = body.get("data", {})
             logger.info("Webhook: source=%s event=%s", source, event)
+            nami_ws.broadcast("webhook", {"source": source, "event": event, "data": data})
             self._json(200, {"ok": True, "source": source, "event": event})
         else:
             self._json(404, {"error": f"not found: {path}"})
@@ -349,6 +354,10 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
         api_key = api_key_raw
     NamiAPIHandler.api_key = api_key
 
+    # Start WebSocket server
+    ws_port = int(os.environ.get("NAMI_WS_PORT", "8093"))
+    nami_ws.start_ws_server(host, ws_port)
+
     # Start HTTP server
     server = HTTPServer((host, port), NamiAPIHandler)
     logger.info("API server listening on %s:%d", host, port)
@@ -357,6 +366,7 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
     def _shutdown(signum: int, frame: Any) -> None:
         logger.info("Shutting down...")
         scheduler.stop()
+        nami_ws.stop_ws_server()
         server.shutdown()
         sys.exit(0)
 

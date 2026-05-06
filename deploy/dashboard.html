@@ -217,6 +217,53 @@ async function runDispatch() {
 
 refresh();
 setInterval(refresh, 60000);
+
+// WebSocket real-time push
+const WS_URL = window.location.hostname.includes('nip.io')
+  ? `wss://nami-api.178.104.181.132.nip.io/ws`
+  : 'ws://127.0.0.1:8093';
+let ws = null;
+let wsRetryMs = 3000;
+
+function connectWS() {
+  try {
+    ws = new WebSocket(WS_URL);
+    ws.onopen = () => { console.log('WS connected'); wsRetryMs = 3000; };
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        handleWSEvent(msg.event, msg.data);
+      } catch(err) { console.warn('WS parse error', err); }
+    };
+    ws.onclose = () => { console.log('WS closed, retrying...'); setTimeout(connectWS, wsRetryMs); wsRetryMs = Math.min(wsRetryMs * 1.5, 30000); };
+    ws.onerror = () => { ws.close(); };
+  } catch(e) { console.warn('WS unavailable, falling back to polling'); }
+}
+
+function handleWSEvent(event, data) {
+  const dot = document.getElementById('core-dot');
+  if (event === 'dispatch') {
+    // Flash the dot briefly
+    dot.className = 'status-dot ok';
+    document.getElementById('last-update').textContent = new Date().toLocaleTimeString() + ' ⚡';
+    setTimeout(() => { document.getElementById('last-update').textContent = new Date().toLocaleTimeString(); }, 2000);
+  } else if (event === 'scheduler') {
+    // Refresh scheduler card on scheduler events
+    if (data.status === 'ok') {
+      const si = document.getElementById('scheduler-info');
+      const existing = si.querySelector(`[data-job="${data.job}"]`);
+      if (existing) existing.querySelector('.badge').className = 'badge ok';
+    }
+  } else if (event === 'webhook') {
+    document.getElementById('last-update').textContent = new Date().toLocaleTimeString() + ' 🔔';
+    setTimeout(() => { document.getElementById('last-update').textContent = new Date().toLocaleTimeString(); }, 2000);
+  }
+  // Refresh all data on any event (debounced)
+  clearTimeout(handleWSEvent._timer);
+  handleWSEvent._timer = setTimeout(refresh, 1000);
+}
+
+connectWS();
 </script>
 </body>
 </html>
