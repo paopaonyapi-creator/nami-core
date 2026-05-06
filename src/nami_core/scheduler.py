@@ -178,6 +178,14 @@ class NamiAPIHandler(BaseHTTPRequestHandler):
         else:
             self._json(404, {"error": f"not found: {path}"})
 
+    def do_OPTIONS(self) -> None:
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.end_headers()
+
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
