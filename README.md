@@ -110,13 +110,29 @@ Secrets are loaded from `/etc/nami-harness/` (root-only 700/600).
 ## Test Results
 
 ```
-69 passed in 8.57s
+225 passed in 37.66s
 ```
 
 ## Status
 
-Phase 0+1+2+3+4 complete. Workers have real integration code (Telegram, AI, OANDA).
-Next: Deploy to VPS in shadow mode and extract remaining service-specific logic.
+**Current version: v0.13.0** (2026-05-06)
+
+Shipped highlights:
+- FastAPI server with batch dispatch, SSE streaming, webhook HMAC signing
+- Redis pub/sub with in-process fallback
+- 23 plugin workers (signal, proxy, lottery, bot, trading, gateway, status,
+  bridge, graphify, ai_chat, sentiment, search, image, email, relay,
+  pipeline, scheduler, cron, notification, analytics, default + 2 utility)
+- Per-worker rate limit visibility (`GET /workers/{name}/rate-limit`)
+- Per-worker health checks (`GET /workers/{name}/health`)
+- Hot-reload (`POST /reload-workers`) and graceful restart (`POST /restart`)
+- Audit trail (SQLite) and Prometheus metrics
+- TypeScript SDK + Next.js dashboard with interactive `/docs` page
+- Dashboard auto-deployed to Netlify
+- 225 tests in CI
+
+Next: Deploy v0.13.0 to VPS in shadow mode (Redis install + nginx fix pending).
+See `CHANGELOG.md` for the full per-version log.
 
 ## License
 
