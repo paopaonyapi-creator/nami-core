@@ -153,6 +153,7 @@ class NamiAPIHandler(BaseHTTPRequestHandler):
 
     hermes: Hermes = None  # type: ignore
     scheduler: NamiScheduler = None  # type: ignore
+    api_key: str = ""  # type: ignore
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -191,6 +192,14 @@ class NamiAPIHandler(BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/")
 
         if path == "/dispatch":
+            # API key auth for dispatch (skip if no key configured)
+            if self.api_key:
+                auth = self.headers.get("Authorization", "")
+                key = auth.replace("Bearer ", "") if auth.startswith("Bearer ") else auth
+                if key != self.api_key:
+                    self._json(401, {"error": "unauthorized"})
+                    return
+
             body = self._read_body()
             if body is None:
                 return
@@ -287,6 +296,7 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
     # Wire handler references
     NamiAPIHandler.hermes = hermes
     NamiAPIHandler.scheduler = scheduler
+    NamiAPIHandler.api_key = os.environ.get("NAMI_API_KEY", "")
 
     # Start HTTP server
     server = HTTPServer((host, port), NamiAPIHandler)

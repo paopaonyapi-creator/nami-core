@@ -9,6 +9,7 @@ User=root
 WorkingDirectory=/opt/nami-core
 Environment=NAMI_CONFIG_DIR=/opt/nami-core/config
 Environment=PATH=/opt/nami-core/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=NAMI_API_KEY=/etc/nami-harness/nami_api_key
 ExecStart=/opt/nami-core/.venv/bin/python -m nami_core.scheduler
 Restart=always
 RestartSec=10
