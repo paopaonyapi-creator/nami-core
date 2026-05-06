@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Activity, Cpu, Clock, Moon, Sun, RefreshCw, Zap, Send,
-  BarChart3, Shield, Database,
+  BarChart3, Shield, Database, Heart, Layers, Radio,
 } from "lucide-react";
 import {
   Chart as ChartJS,
@@ -19,6 +19,9 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://127.0.0.1:8092/ws";
 
 interface WorkerInfo { name: string; actions: string[] }
 interface AuditEntry { worker: string; action: string; caller_ip: string; ok: boolean; latency_ms: number; timestamp: string }
+interface WorkerHealth { worker: string; healthy: boolean | null; latency_ms: number; actions: string[]; message?: string }
+interface BatchResult { worker: string; action: string; ok: boolean; latency_ms: number; error?: string }
+interface SSEEvent { event: string; data: Record<string, unknown> }
 
 async function apiFetch<T>(path: string): Promise<T> {
   const r = await fetch(`${API_BASE}${path}`);
@@ -36,17 +39,59 @@ function MetricCard({ label, value, icon: Icon }: { label: string; value: string
   );
 }
 
-function WorkerChips({ workers }: { workers: WorkerInfo[] }) {
+function WorkerHealthCards({ workers }: { workers: WorkerInfo[] }) {
+  const [healthMap, setHealthMap] = useState<Record<string, WorkerHealth>>({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchHealth = async () => {
+      setLoading(true);
+      const results: Record<string, WorkerHealth> = {};
+      await Promise.all(workers.map(async w => {
+        try {
+          const r = await fetch(`${API_BASE}/workers/${w.name}/health`);
+          if (r.ok) results[w.name] = await r.json();
+        } catch { /* skip */ }
+      }));
+      setHealthMap(results);
+      setLoading(false);
+    };
+    if (workers.length > 0) fetchHealth();
+  }, [workers]);
+
+  useEffect(() => {
+    const id = setInterval(async () => {
+      const results: Record<string, WorkerHealth> = {};
+      await Promise.all(workers.map(async w => {
+        try {
+          const r = await fetch(`${API_BASE}/workers/${w.name}/health`);
+          if (r.ok) results[w.name] = await r.json();
+        } catch { /* skip */ }
+      }));
+      setHealthMap(results);
+    }, 30000);
+    return () => clearInterval(id);
+  }, [workers]);
+
   return (
     <div className="card">
       <h2 className="card-title">
-        <Cpu size={16} /> Workers ({workers.length})
+        <Heart size={16} /> Workers ({workers.length})
       </h2>
-      <div className="flex flex-wrap gap-1">
-        {workers.map(w => (
-          <span key={w.name} className="chip">{w.name}</span>
-        ))}
-      </div>
+      {loading ? <div className="text-xs text-dim">Loading health...</div> : (
+        <div className="flex flex-wrap gap-1">
+          {workers.map(w => {
+            const h = healthMap[w.name];
+            const badge = h?.healthy === true ? "bg-green-900/30 text-green-400" : h?.healthy === false ? "bg-red-900/30 text-red-400" : "bg-gray-800 text-gray-400";
+            const lat = h?.latency_ms ? `${h.latency_ms.toFixed(0)}ms` : "";
+            return (
+              <span key={w.name} className={`chip ${badge}`} title={h?.message || lat}>
+                {w.name} {lat && <span className="text-[10px] opacity-60">{lat}</span>}
+              </span>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -151,6 +196,102 @@ function WorkerBarChart({ workers }: { workers: WorkerInfo[] }) {
   );
 }
 
+function BatchDispatchPanel() {
+  const [items, setItems] = useState('[{"worker":"status","action":"health","payload":{}}]');
+  const [results, setResults] = useState<BatchResult[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const runBatch = async () => {
+    setLoading(true);
+    try {
+      const parsed = JSON.parse(items);
+      const r = await fetch(`${API_BASE}/dispatch/batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: parsed }),
+      });
+      const d = await r.json();
+      setResults(d.results || []);
+    } catch (e) { setResults([{ worker: "error", action: "", ok: false, latency_ms: 0, error: String(e) }]); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="card">
+      <h2 className="card-title">
+        <Layers size={16} /> Batch Dispatch
+      </h2>
+      <div className="flex flex-col gap-2">
+        <textarea placeholder='[{"worker":"status","action":"health"}]' value={items} onChange={e => setItems(e.target.value)} rows={3} className="input-dark font-mono text-xs" aria-label="Batch items JSON" />
+        <button onClick={runBatch} disabled={loading} className="btn-gold">
+          {loading ? "Running..." : "▶ Run Batch"}
+        </button>
+        {results && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead><tr className="table-header">
+                <th className="text-left py-1 px-2">Worker</th><th className="text-left py-1 px-2">Action</th>
+                <th className="text-left py-1 px-2">OK</th><th className="text-left py-1 px-2">Latency</th>
+              </tr></thead>
+              <tbody>
+                {results.map((r, i) => (
+                  <tr key={i} className="border-b table-row-border">
+                    <td className="py-1 px-2">{r.worker}</td><td className="py-1 px-2">{r.action}</td>
+                    <td className="py-1 px-2">{r.ok ? "✓" : "✗"}</td>
+                    <td className="py-1 px-2">{r.latency_ms?.toFixed(1) ?? "—"}ms</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SSEEventLog() {
+  const [events, setEvents] = useState<SSEEvent[]>([]);
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    const es = new EventSource(`${API_BASE}/events`);
+    es.addEventListener("connected", () => setConnected(true));
+    es.addEventListener("ping", () => setConnected(true));
+    es.addEventListener("dispatch", (e) => {
+      const data = JSON.parse(e.data);
+      setEvents(prev => [{ event: "dispatch", data }, ...prev].slice(0, 20));
+    });
+    es.addEventListener("webhook", (e) => {
+      const data = JSON.parse(e.data);
+      setEvents(prev => [{ event: "webhook", data }, ...prev].slice(0, 20));
+    });
+    es.onerror = () => setConnected(false);
+    return () => es.close();
+  }, []);
+
+  return (
+    <div className="card">
+      <h2 className="card-title">
+        <Radio size={16} /> SSE Events
+        <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded ${connected ? "bg-green-900/30 text-green-400" : "bg-red-900/30 text-red-400"}`}>
+          {connected ? "LIVE" : "OFF"}
+        </span>
+      </h2>
+      <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
+        {events.length === 0 ? <div className="text-xs text-dim">Waiting for events...</div> : (
+          events.map((e, i) => (
+            <div key={i} className="text-xs font-mono flex gap-2">
+              <span className="text-gold-dim">{e.event}</span>
+              <span className="text-dim truncate">{JSON.stringify(e.data).slice(0, 80)}</span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [dark, setDark] = useState(true);
   const [workers, setWorkers] = useState<WorkerInfo[]>([]);
@@ -227,11 +368,13 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 px-6 pb-6">
-        <WorkerChips workers={workers} />
+        <WorkerHealthCards workers={workers} />
         <WorkerBarChart workers={workers} />
         <LatencyChart entries={audit} />
         <AuditTable entries={audit} />
         <DispatchPanel workers={workers} />
+        <BatchDispatchPanel />
+        <SSEEventLog />
         <div className="card">
           <h2 className="card-title">
             <Database size={16} /> Quick Actions

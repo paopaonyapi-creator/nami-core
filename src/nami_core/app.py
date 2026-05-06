@@ -191,7 +191,7 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
     app = FastAPI(
         title="Nami Core API",
         description="Unified agentic system — Hermes brain + Harness control + worker plugins.",
-        version="0.11.0",
+        version="0.12.0",
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",

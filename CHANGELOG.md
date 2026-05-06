@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.12.0 — 2026-05-06
+
+### Added
+
+- **TypeScript SDK**: `nami-dashboard/src/lib/sdk.ts` — `NamiClient` class with health, workers, dispatch, batchDispatch, workerHealth, rateLimit, events (SSE)
+- **Worker Health Cards**: Dashboard shows per-worker health status with green/red badges, auto-refresh every 30s
+- **Batch Dispatch Panel**: Dashboard UI for sending multiple dispatches in one request
+- **SSE Event Log**: Real-time event stream display with LIVE/OFF indicator
+- **API Examples**: `docs/examples.md` — curl + TypeScript examples for all endpoints
+
+### Changed
+
+- **App version**: 0.11.0 → 0.12.0
+- **Dashboard**: WorkerChips → WorkerHealthCards with health status
+
 ## 0.11.0 — 2026-05-06
 
 ### Added
