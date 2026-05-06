@@ -296,7 +296,17 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
     # Wire handler references
     NamiAPIHandler.hermes = hermes
     NamiAPIHandler.scheduler = scheduler
-    NamiAPIHandler.api_key = os.environ.get("NAMI_API_KEY", "")
+    # Read API key: if env var points to a file, read it; otherwise use as-is
+    api_key_raw = os.environ.get("NAMI_API_KEY", "")
+    if api_key_raw and os.path.isfile(api_key_raw):
+        try:
+            with open(api_key_raw) as f:
+                api_key = f.read().strip()
+        except (OSError, PermissionError):
+            api_key = api_key_raw
+    else:
+        api_key = api_key_raw
+    NamiAPIHandler.api_key = api_key
 
     # Start HTTP server
     server = HTTPServer((host, port), NamiAPIHandler)
