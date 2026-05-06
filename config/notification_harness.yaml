@@ -5,6 +5,10 @@ allowed_actions:
   - subscribe
   - unsubscribe
   - list
-rate_limit: 60
+rate_limit:
+  max_events: 60
+  window_seconds: 60
 quality:
-  max_output_size: 1024
+  require_non_empty: []
+  forbid_terms:
+    - raw_secret

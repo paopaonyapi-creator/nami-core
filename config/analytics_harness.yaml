@@ -5,6 +5,10 @@ allowed_actions:
   - summary
   - leaderboard
   - recent
-rate_limit: 120
+rate_limit:
+  max_events: 120
+  window_seconds: 60
 quality:
-  max_output_size: 4096
+  require_non_empty: []
+  forbid_terms:
+    - raw_secret
