@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.11.0 — 2026-05-06
+
+### Added
+
+- **Batch Dispatch**: `POST /dispatch/batch` — send up to 10 dispatches in one request, returns array of results
+- **Webhook Auth Signing**: HMAC-SHA256 payload signing with `NAMI_WEBHOOK_SECRET` (auto-generated if not set), `GET /webhook/verify` for verification instructions
+- **Worker Health Checks**: `GET /workers/{name}/health` — run a worker's health action and return detailed status (public read)
+- **SSE Streaming**: `GET /events` — Server-Sent Events stream for real-time dashboard updates with heartbeat and `Last-Event-ID` reconnect support
+- **Redis Pub/Sub**: `nami_core.pubsub` module — publish/subscribe via Redis channel `nami:events`, falls back to in-process broadcast
+
+### Changed
+
+- **App version**: 0.10.0 → 0.11.0
+- **Webhook response**: now includes `signature` field with `sha256=<hex>` HMAC
+- **Tests**: 225 passed (was 213)
+
 ## 0.10.0 — 2026-05-06
 
 ### Added

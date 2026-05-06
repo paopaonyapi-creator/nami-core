@@ -133,6 +133,71 @@ def test_audit_no_auth(client):
 def test_webhook_endpoint(client):
     r = client.post("/webhook", json={"source": "test", "event": "ping", "data": {"ts": 123}})
     assert r.status_code == 200
+    assert "signature" in r.json()
+    assert r.json()["signature"].startswith("sha256=")
+
+
+def test_webhook_verify(client):
+    r = client.get("/webhook/verify")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["algorithm"] == "HMAC-SHA256"
+    assert "secret_fingerprint" in d
+
+
+# === Batch Dispatch ===
+
+def test_batch_dispatch(client):
+    r = client.post("/dispatch/batch",
+        json={"items": [
+            {"worker": "status", "action": "health", "payload": {}},
+            {"worker": "lottery", "action": "fetch_results", "payload": {}},
+        ]},
+        headers=AUTH)
+    assert r.status_code == 200
+    d = r.json()
+    assert "results" in d
+    assert len(d["results"]) == 2
+
+
+def test_batch_dispatch_too_large(client):
+    items = [{"worker": "status", "action": "health", "payload": {}} for _ in range(11)]
+    r = client.post("/dispatch/batch", json={"items": items}, headers=AUTH)
+    assert r.status_code == 400
+
+
+def test_batch_dispatch_empty(client):
+    r = client.post("/dispatch/batch", json={"items": []}, headers=AUTH)
+    assert r.status_code == 400
+
+
+def test_batch_dispatch_no_auth(client):
+    r = client.post("/dispatch/batch", json={"items": [{"worker": "status", "action": "health"}]})
+    assert r.status_code == 401
+
+
+# === Worker Health ===
+
+def test_worker_health(client):
+    r = client.get("/workers/status/health")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["worker"] == "status"
+    assert "healthy" in d
+
+
+def test_worker_health_not_found(client):
+    r = client.get("/workers/nonexistent/health")
+    assert r.status_code == 404
+
+
+# === SSE ===
+
+def test_sse_events_headers(client):
+    """SSE endpoint should return correct content-type and initial event."""
+    r = client.get("/events?test=true")
+    assert r.status_code == 200
+    assert "connected" in r.text
 
 
 # === WebSocket ===

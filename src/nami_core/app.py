@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -58,6 +61,14 @@ class DispatchResponse(BaseModel):
     output: dict[str, Any] | None = None
     latency_ms: float | None = None
     error: str | None = None
+
+class BatchDispatchItem(BaseModel):
+    worker: str
+    action: str
+    payload: dict[str, Any] = {}
+
+class BatchDispatchRequest(BaseModel):
+    items: list[BatchDispatchItem]
 
 class RotateKeyRequest(BaseModel):
     new_key: str
@@ -180,7 +191,7 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
     app = FastAPI(
         title="Nami Core API",
         description="Unified agentic system — Hermes brain + Harness control + worker plugins.",
-        version="0.10.0",
+        version="0.11.0",
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
@@ -201,6 +212,10 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
     read_limiter = RateLimiter(max_requests=120, window_seconds=60)
     worker_limiters: dict[str, RateLimiter] = {}
     worker_rate_max = int(os.environ.get("NAMI_DISPATCH_RATE_LIMIT", "30"))
+    webhook_secret = os.environ.get("NAMI_WEBHOOK_SECRET", "")
+    if not webhook_secret:
+        webhook_secret = hashlib.sha256(os.urandom(32)).hexdigest()[:32]
+        logger.info("Generated NAMI_WEBHOOK_SECRET (set env var to customize)")
 
     # Store references in app state
     app.state.hermes = hermes
@@ -312,12 +327,125 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             _audit_log(req.worker, req.action, ip, False, 0)
             raise HTTPException(status_code=500, detail=str(exc))
 
+    # ── Batch dispatch ──
+
+    @app.post("/dispatch/batch")
+    async def dispatch_batch(req: BatchDispatchRequest, request: Request, _auth: str = Depends(verify_api_key)):
+        """Dispatch multiple worker actions in one request (max 10)."""
+        Metrics.request_count += 1
+        if len(req.items) > 10:
+            raise HTTPException(status_code=400, detail="batch size limited to 10 items")
+        if not req.items:
+            raise HTTPException(status_code=400, detail="items cannot be empty")
+
+        ip = request.client.host if request.client else "-"
+        results = []
+        for item in req.items:
+            if not item.worker or not item.action:
+                results.append({"worker": item.worker, "action": item.action, "ok": False, "error": "worker and action required", "latency_ms": 0})
+                continue
+            # Per-worker rate limit
+            if item.worker not in worker_limiters:
+                worker_limiters[item.worker] = RateLimiter(max_requests=worker_rate_max, window_seconds=60)
+            if not worker_limiters[item.worker].is_allowed(ip):
+                results.append({"worker": item.worker, "action": item.action, "ok": False, "error": f"rate limit exceeded for worker '{item.worker}'", "latency_ms": 0})
+                continue
+            try:
+                t0 = time.monotonic()
+                result = app.state.hermes.dispatch(item.worker, item.action, item.payload)
+                latency = (time.monotonic() - t0) * 1000
+                Metrics.record_dispatch(latency)
+                _audit_log(item.worker, item.action, ip, True, latency)
+                await ws_manager.broadcast("dispatch", {"worker": item.worker, "action": item.action, "latency_ms": round(latency, 1)})
+                results.append({"worker": item.worker, "action": item.action, "ok": True, "output": result.output, "latency_ms": round(latency, 1)})
+            except Exception as exc:
+                Metrics.record_error()
+                _audit_log(item.worker, item.action, ip, False, 0)
+                results.append({"worker": item.worker, "action": item.action, "ok": False, "error": str(exc), "latency_ms": 0})
+        return {"results": results}
+
+    # ── Webhook with signing ──
+
+    def _sign_payload(body: bytes) -> str:
+        """Sign a payload with HMAC-SHA256 using webhook secret."""
+        return hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
+
     @app.post("/webhook")
     async def webhook(req: WebhookRequest):
         Metrics.request_count += 1
         logger.info("Webhook: source=%s event=%s", req.source, req.event)
-        await ws_manager.broadcast("webhook", {"source": req.source, "event": req.event, "data": req.data})
-        return {"ok": True, "source": req.source, "event": req.event}
+        raw_body = json.dumps({"source": req.source, "event": req.event, "data": req.data}, ensure_ascii=False, default=str).encode()
+        signature = _sign_payload(raw_body)
+        await ws_manager.broadcast("webhook", {"source": req.source, "event": req.event, "data": req.data, "signature": f"sha256={signature}"})
+        return {"ok": True, "source": req.source, "event": req.event, "signature": f"sha256={signature}"}
+
+    @app.get("/webhook/verify")
+    async def webhook_verify():
+        """Returns webhook signing instructions and current secret fingerprint."""
+        return {
+            "algorithm": "HMAC-SHA256",
+            "header": "X-Nami-Signature",
+            "format": "sha256=<hex>",
+            "verify": "HMAC-SHA256(secret, raw_request_body) == signature",
+            "secret_fingerprint": hashlib.sha256(webhook_secret.encode()).hexdigest()[:16],
+        }
+
+    # ── Worker health check ──
+
+    @app.get("/workers/{name}/health")
+    async def worker_health(name: str):
+        """Run a worker's health action and return detailed status."""
+        Metrics.request_count += 1
+        if not app.state.hermes:
+            raise HTTPException(status_code=503, detail="no hermes available")
+        workers = app.state.hermes.list_workers()
+        if name not in workers:
+            raise HTTPException(status_code=404, detail=f"worker '{name}' not found")
+        actions = app.state.hermes.worker_actions(name)
+        health_action = "health" if "health" in actions else "health_check" if "health_check" in actions else None
+        if not health_action:
+            return {"worker": name, "healthy": None, "message": "no health action defined", "actions": sorted(actions)}
+        try:
+            t0 = time.monotonic()
+            result = app.state.hermes.dispatch(name, health_action, {})
+            latency = (time.monotonic() - t0) * 1000
+            return {"worker": name, "healthy": True, "response": result.output, "latency_ms": round(latency, 1), "actions": sorted(actions)}
+        except Exception as exc:
+            return {"worker": name, "healthy": False, "error": str(exc), "latency_ms": 0, "actions": sorted(actions)}
+
+    # ── SSE streaming ──
+
+    @app.get("/events")
+    async def sse_events(request: Request, test: bool = False):
+        """Server-Sent Events stream for real-time updates."""
+        from starlette.responses import StreamingResponse
+
+        async def event_generator():
+            # Send initial connection event
+            yield f"event: connected\ndata: {{\"status\": \"ok\"}}\n\n"
+            if test:
+                return
+            # Keep connection alive with heartbeat
+            last_id = request.headers.get("Last-Event-ID", "0")
+            event_id = int(last_id)
+            while True:
+                # Check if client disconnected
+                if await request.is_disconnected():
+                    break
+                event_id += 1
+                # Heartbeat every 15 seconds
+                await asyncio.sleep(15)
+                yield f": heartbeat\n\nevent: ping\nid: {event_id}\ndata: {{\"ts\": \"{datetime.now(timezone.utc).isoformat()}\"}}\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.post("/rotate-key")
     async def rotate_key(req: RotateKeyRequest, _auth: str = Depends(verify_api_key)):
