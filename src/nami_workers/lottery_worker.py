@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 # ── VPS Lottery API (from /opt/hanoi-bot) ──
 LOTTERY_API_BASE = os.environ.get("LOTTERY_API_BASE", "http://127.0.0.1:3000/api")
+HANOI_API_BASE = os.environ.get("HANOI_API_BASE", "http://127.0.0.1:3002/api")
 
 # ── LaoPatana DB (from /opt/nami-army/vip_lottery_sender.py) ──
 LAO_DB_NAME = os.environ.get("LAO_DB_NAME", "laopatana_stat_lab")
@@ -144,24 +145,26 @@ REGION_CONFIG = {
 
 
 def fetch_draw_results(region: str = "hanoi", limit: int = 30) -> list[dict[str, Any]]:
-    """Fetch recent draw results from VPS lottery API (/opt/hanoi-bot)."""
+    """Fetch recent draw results from VPS lottery API."""
+    base = HANOI_API_BASE if region == "hanoi" else LOTTERY_API_BASE
     try:
-        url = f"{LOTTERY_API_BASE}/results?limit={limit}"
+        url = f"{base}/results?limit={limit}"
         req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError):
-        logger.warning("Lottery API unavailable for results")
+        logger.warning("Lottery API unavailable for %s results", region)
         return []
 
 
 def fetch_predictions(region: str = "hanoi") -> dict[str, Any]:
-    """Fetch AI predictions from VPS lottery API (/opt/hanoi-bot/hanoi_ai.py)."""
+    """Fetch AI predictions from VPS lottery API."""
+    base = HANOI_API_BASE if region == "hanoi" else LOTTERY_API_BASE
     preds = {}
     cfg = REGION_CONFIG.get(region, REGION_CONFIG["hanoi"])
     for draw_type in cfg.get("draw_types", ["special"]):
         try:
-            url = f"{LOTTERY_API_BASE}/predict/{draw_type}"
+            url = f"{base}/predict/{draw_type}"
             req = urllib.request.Request(url)
             with urllib.request.urlopen(req, timeout=15) as resp:
                 preds[draw_type] = json.loads(resp.read().decode("utf-8"))
