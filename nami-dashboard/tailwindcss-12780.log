@@ -1,0 +1,47 @@
+2026-05-06T11:04:47.036005Z  INFO tailwindcss_oxide::scanner: Provided sources:
+2026-05-06T11:04:47.036110Z  INFO tailwindcss_oxide::scanner: Source: PublicSourceEntry { base: "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard", pattern: "**/*", negated: false }
+2026-05-06T11:04:47.036286Z  INFO tailwindcss_oxide::scanner: Optimized sources:
+2026-05-06T11:04:47.036303Z  INFO tailwindcss_oxide::scanner: Source: Auto { base: "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard" }
+2026-05-06T11:04:47.038003Z  INFO discover_sources: tailwindcss_oxide::scanner: enter
+2026-05-06T11:04:47.043437Z  INFO discover_sources:walk_synchronous: tailwindcss_oxide::scanner: enter
+2026-05-06T11:04:47.048126Z  INFO discover_sources:walk_synchronous: tailwindcss_oxide::scanner: exit
+2026-05-06T11:04:47.048580Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\.netlify\\plugins\\package.json"
+2026-05-06T11:04:47.048612Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\eslint.config.mjs"
+2026-05-06T11:04:47.048613Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\CLAUDE.md"
+2026-05-06T11:04:47.048614Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\public\\file.svg"
+2026-05-06T11:04:47.048656Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\public\\window.svg"
+2026-05-06T11:04:47.048691Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\public\\next.svg"
+2026-05-06T11:04:47.048705Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\AGENTS.md"
+2026-05-06T11:04:47.048730Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\next.config.ts"
+2026-05-06T11:04:47.048738Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\ENV_SETUP.txt"
+2026-05-06T11:04:47.048746Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\package.json"
+2026-05-06T11:04:47.048762Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\public\\globe.svg"
+2026-05-06T11:04:47.048766Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\postcss.config.mjs"
+2026-05-06T11:04:47.048764Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\README.md"
+2026-05-06T11:04:47.048817Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\public\\vercel.svg"
+2026-05-06T11:04:47.048832Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\tsconfig.json"
+2026-05-06T11:04:47.048837Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\src\\app\\layout.tsx"
+2026-05-06T11:04:47.048846Z  INFO tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\src\\app\\page.tsx"
+2026-05-06T11:04:47.048893Z  INFO discover_sources: tailwindcss_oxide::scanner: exit
+2026-05-06T11:04:47.048910Z  INFO extract_candidates: tailwindcss_oxide::scanner: enter
+2026-05-06T11:04:47.048918Z  INFO extract_candidates:parse_all_blobs: tailwindcss_oxide::scanner: enter
+2026-05-06T11:04:47.048928Z  INFO extract_candidates:parse_all_blobs:extract: tailwindcss_oxide::scanner: enter
+2026-05-06T11:04:47.049352Z  INFO extract_candidates:parse_all_blobs:extract: tailwindcss_oxide::scanner: exit
+2026-05-06T11:04:47.049370Z  INFO extract_candidates:parse_all_blobs: tailwindcss_oxide::scanner: exit
+2026-05-06T11:04:47.049379Z  INFO extract_candidates:read_all_files: tailwindcss_oxide::scanner: enter
+2026-05-06T11:04:47.049434Z  INFO extract_candidates:read_all_files: tailwindcss_oxide::scanner: Reading 1 file(s)
+2026-05-06T11:04:47.049560Z  INFO extract_candidates:read_all_files: tailwindcss_oxide::scanner: Reading "C:\\Users\\AD PAO\\Desktop\\nanibypao\\nami-core\\nami-dashboard\\src\\app\\globals.css"
+2026-05-06T11:04:47.049578Z  INFO extract_candidates:read_all_files: tailwindcss_oxide::scanner: exit
+2026-05-06T11:04:47.049590Z  INFO extract_candidates:extract_css_variables: tailwindcss_oxide::scanner: enter
+2026-05-06T11:04:47.049599Z  INFO extract_candidates:extract_css_variables:extract: tailwindcss_oxide::scanner: enter
+2026-05-06T11:04:47.049658Z  INFO extract_candidates:extract_css_variables:extract: tailwindcss_oxide::scanner: exit
+2026-05-06T11:04:47.049673Z  INFO extract_candidates:extract_css_variables: tailwindcss_oxide::scanner: exit
+2026-05-06T11:04:47.049740Z  INFO extract_candidates: tailwindcss_oxide::scanner: exit
+2026-05-06T11:04:47.049980Z  INFO get_files: tailwindcss_oxide::scanner: enter
+2026-05-06T11:04:47.049989Z  INFO get_files:discover_sources: tailwindcss_oxide::scanner: enter
+2026-05-06T11:04:47.049993Z  INFO get_files:discover_sources: tailwindcss_oxide::scanner: exit
+2026-05-06T11:04:47.050047Z  INFO get_files: tailwindcss_oxide::scanner: exit
+2026-05-06T11:04:47.050252Z  INFO get_globs: tailwindcss_oxide::scanner: enter
+2026-05-06T11:04:47.050260Z  INFO get_globs:discover_sources: tailwindcss_oxide::scanner: enter
+2026-05-06T11:04:47.050265Z  INFO get_globs:discover_sources: tailwindcss_oxide::scanner: exit
+2026-05-06T11:04:47.055355Z  INFO get_globs: tailwindcss_oxide::scanner: exit

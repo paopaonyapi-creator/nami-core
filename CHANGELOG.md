@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.10.0 — 2026-05-06
+
+### Added
+
+- **Dashboard deployed to Netlify**: `https://nami-dashboard-5e6b3149.netlify.app` — CDN, HTTPS, auto-deploy
+- **`netlify.toml`**: Next.js build config with `@netlify/plugin-nextjs`
+- **`deploy/setup-redis.sh`**: Redis production setup script (install, configure, verify)
+- **`deploy/setup-production.sh`**: Full VPS production setup (Redis + nginx API proxy + env config)
+
+### Changed
+
+- **API URL**: `nami-api.178.104.181.132.nip.io` → `nami.178.104.181.132.nip.io` (SSL cert coverage)
+- **App version**: 0.9.0 → 0.10.0
+
+### Pending (requires SSH to VPS)
+
+- Install Redis on VPS: `bash deploy/setup-production.sh` or `bash deploy/setup-redis.sh`
+- Fix nginx: remove `auth_basic` for API endpoints (GET /health, /workers, /metrics, /docs, /ws)
+- Verify Redis cache backend: `curl https://nami.178.104.181.132.nip.io/cache`
+
 ## 0.9.0 — 2026-05-06
 
 ### Changed
