@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Nami Ecosystem Dashboard</title>
+<title>Nami Ecosystem Dashboard v2</title>
 <style>
 :root {
   --gold: #D4AF37;
@@ -18,11 +18,29 @@
   --orange: #FF9100;
   --blue: #448AFF;
 }
+:root.light {
+  --dark: #F5F5F5;
+  --dark2: #FFFFFF;
+  --dark3: #E8E8E8;
+  --text: #1A1A1A;
+  --text-dim: #666;
+  --gold-dim: #C4A030;
+}
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--dark); color: var(--text); min-height: 100vh; }
 header { background: linear-gradient(135deg, var(--dark2), var(--dark3)); border-bottom: 2px solid var(--gold-dim); padding: 1rem 2rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
 header h1 { color: var(--gold); font-size: 1.5rem; }
 header .status { display: flex; gap: 0.5rem; align-items: center; }
+.theme-btn { background: none; border: 1px solid var(--gold-dim); color: var(--gold); border-radius: 6px; padding: 0.3rem 0.6rem; cursor: pointer; font-size: 0.9rem; }
+.ws-badge { font-size: 0.7rem; padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: 600; }
+.ws-badge.on { background: rgba(0,200,83,0.2); color: var(--green); }
+.ws-badge.off { background: rgba(255,23,68,0.2); color: var(--red); }
+.ws-badge.wait { background: rgba(255,145,0,0.2); color: var(--orange); }
+.grafana-frame { width: 100%; height: 300px; border: 1px solid var(--gold-dim); border-radius: 8px; }
+.job-row { display: flex; justify-content: space-between; align-items: center; padding: 0.3rem 0; border-bottom: 1px solid rgba(212,175,55,0.1); font-size: 0.85rem; }
+.job-row:last-child { border-bottom: none; }
+.run-btn { background: var(--gold-dim); color: var(--dark); border: none; padding: 0.15rem 0.5rem; border-radius: 4px; cursor: pointer; font-size: 0.7rem; font-weight: 600; }
+.run-btn:hover { background: var(--gold); }
 .status-dot { width: 10px; height: 10px; border-radius: 50%; }
 .status-dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .status-dot.down { background: var(--red); box-shadow: 0 0 6px var(--red); }
@@ -68,8 +86,10 @@ main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
 <header>
   <h1>🌸 Nami Ecosystem</h1>
   <div class="status">
+    <span class="ws-badge" id="ws-badge">WS</span>
     <span id="last-update">—</span>
     <div class="status-dot" id="core-dot"></div>
+    <button class="theme-btn" onclick="toggleTheme()" id="theme-btn">🌙</button>
     <button class="refresh-btn" onclick="refresh()">↻</button>
   </div>
 </header>
@@ -82,6 +102,7 @@ main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
   <div class="card"><h2><span class="icon">📈</span> Paper Trading</h2><div id="trading-status"></div></div>
   <div class="card"><h2><span class="icon">🖥️</span> VPS Services</h2><div id="services-list"></div></div>
   <div class="card"><h2><span class="icon">⏰</span> Scheduler</h2><div id="scheduler-info"></div></div>
+  <div class="card"><h2><span class="icon">📋</span> Grafana</h2><iframe class="grafana-frame" title="Grafana Nami Core Dashboard" src="https://grafana.178.104.181.132.nip.io/d-solo/nami?panelId=1&theme=dark" allowfullscreen></iframe></div>
   <div class="card"><h2><span class="icon">🦈</span> MiroShark Oracle</h2><div id="miroshark-status"></div></div>
   <div class="card"><h2><span class="icon">📊</span> API Metrics</h2><div id="metrics-info"></div></div>
   <div class="card">
@@ -221,22 +242,29 @@ setInterval(refresh, 60000);
 // WebSocket real-time push
 const WS_URL = window.location.hostname.includes('nip.io')
   ? `wss://nami-api.178.104.181.132.nip.io/ws`
-  : 'ws://127.0.0.1:8093';
+  : 'ws://127.0.0.1:8092/ws';
 let ws = null;
 let wsRetryMs = 3000;
+
+function updateWSBadge(state) {
+  const b = document.getElementById('ws-badge');
+  b.className = 'ws-badge ' + state;
+  b.textContent = state === 'on' ? 'WS ●' : state === 'wait' ? 'WS ◌' : 'WS ○';
+}
 
 function connectWS() {
   try {
     ws = new WebSocket(WS_URL);
-    ws.onopen = () => { console.log('WS connected'); wsRetryMs = 3000; };
+    updateWSBadge('wait');
+    ws.onopen = () => { console.log('WS connected'); wsRetryMs = 3000; updateWSBadge('on'); };
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
         handleWSEvent(msg.event, msg.data);
       } catch(err) { console.warn('WS parse error', err); }
     };
-    ws.onclose = () => { console.log('WS closed, retrying...'); setTimeout(connectWS, wsRetryMs); wsRetryMs = Math.min(wsRetryMs * 1.5, 30000); };
-    ws.onerror = () => { ws.close(); };
+    ws.onclose = () => { console.log('WS closed, retrying...'); updateWSBadge('off'); setTimeout(connectWS, wsRetryMs); wsRetryMs = Math.min(wsRetryMs * 1.5, 30000); };
+    ws.onerror = () => { updateWSBadge('off'); ws.close(); };
   } catch(e) { console.warn('WS unavailable, falling back to polling'); }
 }
 
@@ -264,6 +292,15 @@ function handleWSEvent(event, data) {
 }
 
 connectWS();
+
+// Dark/Light mode toggle
+function toggleTheme() {
+  const root = document.documentElement;
+  const isLight = root.classList.toggle('light');
+  document.getElementById('theme-btn').textContent = isLight ? '☀️' : '🌙';
+  localStorage.setItem('nami-theme', isLight ? 'light' : 'dark');
+}
+if (localStorage.getItem('nami-theme') === 'light') toggleTheme();
 </script>
 </body>
 </html>

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0 — 2026-05-06
+
+### Added
+
+- Rate limiting: 60 req/min on /dispatch, 120/min on GET (per-IP sliding window)
+- Audit trail: SQLite-backed dispatch log (worker, action, caller IP, latency)
+- API key rotation: POST /rotate-key (requires current key auth)
+- Audit query: GET /audit (auth required)
+- Request logging middleware: structured JSON per request
+- CORS hardening: configurable via NAMI_CORS_ORIGINS env var
+- Scheduler worker: list, enable, disable, run_now via dispatch
+- Cron worker: schedule, cancel, list one-off delayed jobs (SQLite + background checker)
+- Dashboard v2: dark/light mode toggle, WS status badge, Grafana iframe embed
+- 16 workers total (was 14)
+
+### Changed
+
+- WebSocket URL updated to port 8092 (unified with HTTP)
+- 86 tests passing (was 81)
+
 ## 0.4.0 — 2026-05-06
 
 ### Added
