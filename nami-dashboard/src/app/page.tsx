@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Activity, Cpu, Clock, Moon, Sun, RefreshCw, Zap, Send,
-  BarChart3, Shield, Database, Heart, Layers, Radio,
+  BarChart3, Shield, Database, Heart, Layers, Radio, AlertCircle, BookOpen, Gauge,
 } from "lucide-react";
 import {
   Chart as ChartJS,
@@ -22,6 +22,7 @@ interface AuditEntry { worker: string; action: string; caller_ip: string; ok: bo
 interface WorkerHealth { worker: string; healthy: boolean | null; latency_ms: number; actions: string[]; message?: string }
 interface BatchResult { worker: string; action: string; ok: boolean; latency_ms: number; error?: string }
 interface SSEEvent { event: string; data: Record<string, unknown> }
+interface RateLimitInfo { worker: string; max_requests: number; window_seconds: number; active: boolean; current_hits: number }
 
 async function apiFetch<T>(path: string): Promise<T> {
   const r = await fetch(`${API_BASE}${path}`);
@@ -292,6 +293,67 @@ function SSEEventLog() {
   );
 }
 
+function RateLimitsPanel({ workers }: { workers: WorkerInfo[] }) {
+  const [limits, setLimits] = useState<RateLimitInfo[]>([]);
+  const [apiKey, setApiKey] = useState("");
+
+  const fetchLimits = async () => {
+    if (!apiKey) return;
+    const results: RateLimitInfo[] = [];
+    await Promise.all(workers.slice(0, 10).map(async w => {
+      try {
+        const r = await fetch(`${API_BASE}/workers/${w.name}/rate-limit`, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        if (r.ok) results.push(await r.json());
+      } catch { /* skip */ }
+    }));
+    setLimits(results);
+  };
+
+  return (
+    <div className="card">
+      <h2 className="card-title">
+        <Gauge size={16} /> Rate Limits
+      </h2>
+      <div className="flex flex-col gap-2">
+        <div className="flex gap-2">
+          <input placeholder="API Key" value={apiKey} onChange={e => setApiKey(e.target.value)} type="password" className="input-dark flex-1" aria-label="API Key" />
+          <button onClick={fetchLimits} disabled={!apiKey} className="btn-gold text-xs">Check</button>
+        </div>
+        {limits.length > 0 && (
+          <div className="flex flex-col gap-1">
+            {limits.map(l => {
+              const pct = l.active ? Math.min((l.current_hits / l.max_requests) * 100, 100) : 0;
+              const barColor = pct > 80 ? "bg-red-500" : pct > 50 ? "bg-yellow-500" : "bg-green-500";
+              return (
+                <div key={l.worker} className="flex items-center gap-2 text-xs">
+                  <span className="w-20 truncate">{l.worker}</span>
+                  <div className="flex-1 h-2 bg-gray-800 rounded overflow-hidden">
+                    <div className={`h-full ${barColor} rounded`} style={{ width: `${pct}%` }} />
+                  </div>
+                  <span className="text-dim w-16 text-right">{l.current_hits}/{l.max_requests}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AlertToast({ message, onClose }: { message: string; onClose: () => void }) {
+  if (!message) return null;
+  return (
+    <div className="fixed bottom-4 right-4 bg-red-900/90 text-red-200 px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 z-50 text-sm">
+      <AlertCircle size={16} />
+      <span>{message}</span>
+      <button onClick={onClose} className="ml-2 text-red-400 hover:text-white">✕</button>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [dark, setDark] = useState(true);
   const [workers, setWorkers] = useState<WorkerInfo[]>([]);
@@ -300,6 +362,7 @@ export default function Dashboard() {
   const [wsState, setWsState] = useState<"on" | "off" | "wait">("wait");
   const [lastUpdate, setLastUpdate] = useState("—");
   const [healthOk, setHealthOk] = useState(false);
+  const [alert, setAlert] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
 
   const refresh = useCallback(async () => {
@@ -354,6 +417,9 @@ export default function Dashboard() {
           <button onClick={toggleTheme} className="btn-icon" aria-label="Toggle theme">
             {dark ? <Moon size={16} /> : <Sun size={16} />}
           </button>
+          <a href="/docs" className="btn-icon" aria-label="API Docs" title="API Docs">
+            <BookOpen size={16} />
+          </a>
           <button onClick={refresh} className="btn-icon" aria-label="Refresh data">
             <RefreshCw size={16} />
           </button>
@@ -375,6 +441,7 @@ export default function Dashboard() {
         <DispatchPanel workers={workers} />
         <BatchDispatchPanel />
         <SSEEventLog />
+        <RateLimitsPanel workers={workers} />
         <div className="card">
           <h2 className="card-title">
             <Database size={16} /> Quick Actions
@@ -389,6 +456,7 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+      <AlertToast message={alert} onClose={() => setAlert("")} />
     </div>
   );
 }
