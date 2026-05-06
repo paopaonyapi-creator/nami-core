@@ -5,6 +5,7 @@ allowed_actions:
   - predict
   - send_prediction
   - fetch_results
+  - vip
 max_daily_actions: 200
 rate_limit:
   max_events: 10

@@ -1,0 +1,20 @@
+[Unit]
+Description=Nami Core — Unified Orchestrator + Scheduler + API
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/nami-core
+Environment=NAMI_CONFIG_DIR=/opt/nami-core/config
+Environment=PATH=/opt/nami-core/.venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/nami-core/.venv/bin/python -m nami_core.scheduler
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nami-core
+
+[Install]
+WantedBy=multi-user.target
