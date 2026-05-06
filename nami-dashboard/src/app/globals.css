@@ -33,3 +33,119 @@ body {
   color: var(--text);
   font-family: 'Segoe UI', system-ui, sans-serif;
 }
+
+/* Card system */
+.card {
+  background: linear-gradient(135deg, var(--dark2), var(--dark3));
+  border: 1px solid rgba(212,175,55,0.15);
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+}
+
+.card-title {
+  color: var(--gold);
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Form inputs */
+.input-dark {
+  background: var(--dark);
+  color: var(--text);
+  border: 1px solid var(--gold-dim);
+  border-radius: 0.375rem;
+  padding: 0.375rem 0.5rem;
+  font-size: 0.875rem;
+  width: 100%;
+}
+
+/* Buttons */
+.btn-gold {
+  background: var(--gold);
+  color: var(--dark);
+  border-radius: 0.375rem;
+  padding: 0.5rem 1rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+  border: none;
+}
+
+.btn-gold:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-gold-dim {
+  background: var(--gold-dim);
+  color: var(--dark);
+  border-radius: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  font-weight: 600;
+  font-size: 0.75rem;
+  cursor: pointer;
+  border: none;
+}
+
+.btn-icon {
+  background: none;
+  border: 1px solid var(--gold-dim);
+  color: var(--gold);
+  border-radius: 0.5rem;
+  padding: 0.375rem;
+  cursor: pointer;
+}
+
+/* Header */
+.header {
+  background: linear-gradient(135deg, var(--dark2), var(--dark3));
+  border-bottom: 2px solid var(--gold-dim);
+}
+
+.header-title {
+  color: var(--gold);
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+/* Text utilities */
+.text-gold { color: var(--gold); }
+.text-gold-dim { color: var(--gold-dim); }
+.text-dim { color: var(--text-dim); }
+
+/* Worker chip */
+.chip {
+  background: rgba(212,175,55,0.1);
+  border: 1px solid rgba(212,175,55,0.2);
+  border-radius: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  display: inline-block;
+}
+
+/* Pre/code block */
+.pre-dark {
+  background: var(--dark);
+  color: var(--text);
+  border-radius: 0.375rem;
+  padding: 0.5rem;
+  font-size: 0.75rem;
+  overflow: auto;
+  max-height: 10rem;
+}
+
+/* Table header */
+.table-header { color: var(--gold-dim); }
+
+/* Table row border */
+.table-row-border { border-color: rgba(212,175,55,0.1); }
+
+/* Page background */
+.page-bg {
+  background: var(--dark);
+  color: var(--text);
+}

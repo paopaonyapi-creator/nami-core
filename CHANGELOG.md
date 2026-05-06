@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0 — 2026-05-06
+
+### Changed
+
+- **Dashboard code quality**: Replaced all ~40 inline CSS styles in `page.tsx` with CSS utility classes (`card`, `card-title`, `input-dark`, `btn-gold`, `btn-icon`, `chip`, etc.)
+- **Accessibility**: Added `aria-label` and `title` attributes to `<select>`, `<button>`, `<input>`, `<textarea>` elements
+- **CSS architecture**: Added 15+ utility classes to `globals.css` for consistent theming via CSS custom properties
+
 ## 0.8.0 — 2026-05-06
 
 ### Added
