@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 — 2026-05-06
+
+### Added
+
+- WebSocket server on port 8093 (`src/nami_core/ws.py`)
+- Real-time broadcast: dispatch, webhook, scheduler events pushed to dashboard
+- Dashboard WebSocket client with auto-reconnect + debounced refresh
+- nginx `/ws` proxy with Upgrade headers for WSS
+- Dashboard auth via nginx `auth_basic` (user: nami)
+- `/metrics` endpoint also protected with auth_basic
+- `deploy/setup_dashboard_auth.sh` — one-shot auth setup
+- `deploy/setup-domain.sh` — one-shot permanent domain + SSL setup
+- `deploy/nginx-nami-api.conf` — reference nginx config with WS proxy
+
 ## 0.2.0 — 2026-05-06
 
 ### Added
