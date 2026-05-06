@@ -1,0 +1,13 @@
+name: cron
+description: One-off delayed execution worker
+allowed_actions:
+  - schedule
+  - cancel
+  - list
+rate_limit:
+  max_events: 30
+  window_seconds: 60
+quality:
+  require_non_empty: []
+  forbid_terms:
+    - raw_secret

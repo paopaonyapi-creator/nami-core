@@ -110,6 +110,60 @@ class TestFastAPIApp(unittest.TestCase):
         resp = self.client.get("/docs")
         self.assertEqual(resp.status_code, 200)
 
+    def test_rotate_key(self):
+        resp = self.client.post("/rotate-key",
+            json={"new_key": "new-key-456"},
+            headers={"Authorization": "Bearer test-key-123"})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["ok"])
+
+        # Old key should no longer work
+        resp2 = self.client.post("/dispatch",
+            json={"worker": "test", "action": "echo"},
+            headers={"Authorization": "Bearer test-key-123"})
+        self.assertEqual(resp2.status_code, 401)
+
+        # New key should work
+        resp3 = self.client.post("/dispatch",
+            json={"worker": "test", "action": "echo"},
+            headers={"Authorization": "Bearer new-key-456"})
+        self.assertEqual(resp3.status_code, 200)
+
+    def test_audit_trail(self):
+        # Dispatch first to create audit entry
+        self.client.post("/dispatch",
+            json={"worker": "test", "action": "echo"},
+            headers={"Authorization": "Bearer test-key-123"})
+        resp = self.client.get("/audit",
+            headers={"Authorization": "Bearer test-key-123"})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("entries", data)
+
+    def test_audit_requires_auth(self):
+        resp = self.client.get("/audit")
+        self.assertEqual(resp.status_code, 401)
+
+    def test_rate_limit_on_dispatch(self):
+        # Reset rate limiter by creating fresh app
+        fresh_app = create_app(hermes=self.hermes, scheduler=self.scheduler, api_key="test-key-123")
+        fresh_client = TestClient(fresh_app)
+        hit_429 = False
+        for i in range(70):
+            resp = fresh_client.post("/dispatch",
+                json={"worker": "test", "action": "echo"},
+                headers={"Authorization": "Bearer test-key-123"})
+            if resp.status_code == 429:
+                hit_429 = True
+                break
+        self.assertTrue(hit_429, "Expected 429 rate limit after 60+ dispatches")
+
+    def test_websocket_connect(self):
+        with self.client.websocket_connect("/ws") as ws:
+            # Just verify connection works
+            pass  # Connection established successfully
+
 
 if __name__ == "__main__":
     unittest.main()

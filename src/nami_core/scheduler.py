@@ -177,6 +177,8 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
     from nami_workers.gold_worker import gold_worker
     from nami_workers.notification_worker import notification_worker
     from nami_workers.analytics_worker import analytics_worker
+    from nami_workers.scheduler_worker import scheduler_worker, set_scheduler_ref
+    from nami_workers.cron_worker import cron_worker, set_hermes_ref, start_cron_checker
 
     registry.register("lottery", lottery_worker)
     registry.register("signal", signal_worker)
@@ -191,6 +193,8 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
     registry.register("gold", gold_worker)
     registry.register("notification", notification_worker)
     registry.register("analytics", analytics_worker)
+    registry.register("scheduler", scheduler_worker)
+    registry.register("cron", cron_worker)
 
     # Load harness configs
     registry.load_from_directory(config_dir)
@@ -217,6 +221,11 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
     scheduler = NamiScheduler(hermes, ws_broadcast=app.state.ws_broadcast)
     scheduler.start()
     app.state.scheduler = scheduler
+
+    # Set worker refs
+    set_scheduler_ref(scheduler)
+    set_hermes_ref(hermes)
+    start_cron_checker()
 
     # Start uvicorn
     import uvicorn

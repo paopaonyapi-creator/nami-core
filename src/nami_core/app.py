@@ -4,15 +4,42 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sqlite3
 import time
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 logger = logging.getLogger("nami_core.app")
+
+# ── Audit trail ──
+
+AUDIT_DB = os.environ.get("NAMI_AUDIT_DB", "/tmp/nami_audit.db")
+
+def _audit_log(worker: str, action: str, caller_ip: str, ok: bool, latency_ms: float) -> None:
+    try:
+        conn = sqlite3.connect(AUDIT_DB)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                worker TEXT, action TEXT, caller_ip TEXT,
+                ok BOOLEAN, latency_ms REAL,
+                timestamp TEXT NOT NULL
+            )
+        """)
+        conn.execute(
+            "INSERT INTO audit_log (worker, action, caller_ip, ok, latency_ms, timestamp) VALUES (?,?,?,?,?,?)",
+            (worker, action, caller_ip, ok, latency_ms, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        logger.warning("Audit log failed: %s", exc)
+
 
 # ── Pydantic models ──
 
@@ -31,6 +58,9 @@ class DispatchResponse(BaseModel):
     output: dict[str, Any] | None = None
     latency_ms: float | None = None
     error: str | None = None
+
+class RotateKeyRequest(BaseModel):
+    new_key: str
 
 # ── Metrics state ──
 
@@ -123,6 +153,25 @@ class WSManager:
             pass
 
 
+# ── Rate limiter (in-memory, per-IP) ──
+
+class RateLimiter:
+    """Simple sliding-window rate limiter."""
+
+    def __init__(self, max_requests: int = 60, window_seconds: int = 60) -> None:
+        self._max = max_requests
+        self._window = window_seconds
+        self._hits: dict[str, list[float]] = {}
+
+    def is_allowed(self, key: str) -> bool:
+        now = time.monotonic()
+        hits = self._hits.get(key, [])
+        hits = [t for t in hits if now - t < self._window]
+        hits.append(now)
+        self._hits[key] = hits
+        return len(hits) <= self._max
+
+
 # ── App factory ──
 
 def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> FastAPI:
@@ -131,27 +180,45 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
     app = FastAPI(
         title="Nami Core API",
         description="Unified agentic system — Hermes brain + Harness control + worker plugins.",
-        version="0.4.0",
+        version="0.5.0",
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
 
+    # CORS: restrict to nami domains
+    allowed_origins = os.environ.get("NAMI_CORS_ORIGINS", "*").split(",")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
     ws_manager = WSManager()
+    dispatch_limiter = RateLimiter(max_requests=60, window_seconds=60)
+    read_limiter = RateLimiter(max_requests=120, window_seconds=60)
 
     # Store references in app state
     app.state.hermes = hermes
     app.state.scheduler = scheduler
     app.state.api_key = api_key
     app.state.ws_manager = ws_manager
+
+    # ── Request logging middleware ──
+
+    @app.middleware("http")
+    async def log_requests(request: Request, call_next):
+        t0 = time.monotonic()
+        response = await call_next(request)
+        latency = round((time.monotonic() - t0) * 1000, 1)
+        logger.info(
+            "REQUEST method=%s path=%s status=%d latency=%s ip=%s",
+            request.method, request.url.path, response.status_code, latency,
+            request.client.host if request.client else "-",
+        )
+        return response
 
     # ── Auth dependency ──
 
@@ -166,7 +233,7 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
     # ── Routes ──
 
     @app.get("/health")
-    async def health():
+    async def health(request: Request):
         Metrics.request_count += 1
         return {
             "status": "ok",
@@ -177,8 +244,11 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         }
 
     @app.get("/workers")
-    async def workers():
+    async def workers(request: Request):
         Metrics.request_count += 1
+        ip = request.client.host if request.client else "-"
+        if not read_limiter.is_allowed(ip):
+            raise HTTPException(status_code=429, detail="rate limit exceeded")
         result = []
         if app.state.hermes:
             for name in app.state.hermes.list_workers():
@@ -187,7 +257,7 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         return {"workers": result}
 
     @app.get("/scheduler")
-    async def scheduler_status():
+    async def scheduler_status(request: Request):
         Metrics.request_count += 1
         if app.state.scheduler:
             return app.state.scheduler.status()
@@ -209,8 +279,11 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         )
 
     @app.post("/dispatch", response_model=DispatchResponse)
-    async def dispatch(req: DispatchRequest, _auth: str = Depends(verify_api_key)):
+    async def dispatch(req: DispatchRequest, request: Request, _auth: str = Depends(verify_api_key)):
         Metrics.request_count += 1
+        ip = request.client.host if request.client else "-"
+        if not dispatch_limiter.is_allowed(ip):
+            raise HTTPException(status_code=429, detail="rate limit exceeded")
         if not req.worker or not req.action:
             raise HTTPException(status_code=400, detail="worker and action required")
 
@@ -219,13 +292,16 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             result = app.state.hermes.dispatch(req.worker, req.action, req.payload)
             latency = (time.monotonic() - t0) * 1000
             Metrics.record_dispatch(latency)
+            _audit_log(req.worker, req.action, ip, True, latency)
             await ws_manager.broadcast("dispatch", {"worker": req.worker, "action": req.action, "latency_ms": round(latency, 1)})
             return DispatchResponse(ok=True, output=result.output, latency_ms=round(latency, 1))
         except ValueError as exc:
             Metrics.record_error()
+            _audit_log(req.worker, req.action, ip, False, 0)
             raise HTTPException(status_code=404, detail=str(exc))
         except Exception as exc:
             Metrics.record_error()
+            _audit_log(req.worker, req.action, ip, False, 0)
             raise HTTPException(status_code=500, detail=str(exc))
 
     @app.post("/webhook")
@@ -234,6 +310,30 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         logger.info("Webhook: source=%s event=%s", req.source, req.event)
         await ws_manager.broadcast("webhook", {"source": req.source, "event": req.event, "data": req.data})
         return {"ok": True, "source": req.source, "event": req.event}
+
+    @app.post("/rotate-key")
+    async def rotate_key(req: RotateKeyRequest, _auth: str = Depends(verify_api_key)):
+        """Rotate the API key. Requires current key auth."""
+        if not req.new_key or len(req.new_key) < 8:
+            raise HTTPException(status_code=400, detail="new_key must be at least 8 characters")
+        app.state.api_key = req.new_key
+        logger.info("API key rotated")
+        return {"ok": True, "message": "API key rotated successfully"}
+
+    @app.get("/audit")
+    async def audit_trail(limit: int = 50, _auth: str = Depends(verify_api_key)):
+        """Get recent audit log entries."""
+        try:
+            conn = sqlite3.connect(AUDIT_DB)
+            cur = conn.execute(
+                "SELECT worker, action, caller_ip, ok, latency_ms, timestamp FROM audit_log ORDER BY id DESC LIMIT ?",
+                (limit,),
+            )
+            rows = [{"worker": r[0], "action": r[1], "caller_ip": r[2], "ok": bool(r[3]), "latency_ms": r[4], "timestamp": r[5]} for r in cur.fetchall()]
+            conn.close()
+            return {"entries": rows}
+        except Exception:
+            return {"entries": []}
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
