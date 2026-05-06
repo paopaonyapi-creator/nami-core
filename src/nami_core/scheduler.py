@@ -1,14 +1,13 @@
-"""Nami Core Scheduler — periodic job runner and HTTP API server.
+"""Nami Core Scheduler — periodic job runner and FastAPI server.
 
 Runs as a long-lived daemon that:
-  1. Serves an HTTP API on port 8092 for worker dispatch
+  1. Serves a FastAPI HTTP+WS API on port 8092
   2. Runs scheduled jobs (lottery predict, signal generate, etc.)
   3. Reports health via /health endpoint
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import signal
@@ -16,15 +15,10 @@ import sys
 import time
 import threading
 from datetime import datetime, timezone
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Any
-from urllib.parse import urlparse, parse_qs
 
 from nami_core.hermes import Hermes
-try:
-    from nami_core import ws as nami_ws
-except ImportError:
-    nami_ws = None  # websockets not installed
+from nami_core.app import create_app, Metrics
 from nami_workers.registry import WorkerRegistry
 
 logger = logging.getLogger("nami_core.scheduler")
@@ -84,11 +78,12 @@ SCHEDULES: list[dict[str, Any]] = [
 class NamiScheduler:
     """Periodic job scheduler for nami-core workers."""
 
-    def __init__(self, hermes: Hermes) -> None:
+    def __init__(self, hermes: Hermes, ws_broadcast=None) -> None:
         self.hermes = hermes
         self._running = False
         self._last_run: dict[str, float] = {}
         self._lock = threading.Lock()
+        self._ws_broadcast = ws_broadcast
 
     def start(self) -> None:
         self._running = True
@@ -137,10 +132,12 @@ class NamiScheduler:
         try:
             result = self.hermes.dispatch(worker, action, payload)
             logger.info("Scheduled job %s: OK — %s", desc, str(result.output)[:200])
-            if nami_ws: nami_ws.broadcast("scheduler", {"job": key, "worker": worker, "action": action, "status": "ok"})
+            if self._ws_broadcast:
+                self._ws_broadcast("scheduler", {"job": key, "worker": worker, "action": action, "status": "ok"})
         except Exception as exc:
             logger.warning("Scheduled job %s: ERROR — %s", desc, exc)
-            if nami_ws: nami_ws.broadcast("scheduler", {"job": key, "worker": worker, "action": action, "status": "error", "error": str(exc)})
+            if self._ws_broadcast:
+                self._ws_broadcast("scheduler", {"job": key, "worker": worker, "action": action, "status": "error", "error": str(exc)})
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -154,148 +151,8 @@ class NamiScheduler:
             }
 
 
-class NamiAPIHandler(BaseHTTPRequestHandler):
-    """HTTP API handler for nami-core."""
-
-    hermes: Hermes = None  # type: ignore
-    scheduler: NamiScheduler = None  # type: ignore
-    api_key: str = ""  # type: ignore
-    # Metrics counters
-    _request_count: int = 0
-    _dispatch_count: int = 0
-    _dispatch_errors: int = 0
-    _dispatch_latency_ms: list[float] = []  # last 100
-
-    def do_GET(self) -> None:
-        NamiAPIHandler._request_count += 1
-        parsed = urlparse(self.path)
-        path = parsed.path.rstrip("/")
-        params = parse_qs(parsed.query)
-
-        if path == "/health":
-            self._json(200, {
-                "status": "ok",
-                "service": "nami-core",
-                "workers": self.hermes.list_workers(),
-                "scheduler": self.scheduler.status(),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
-        elif path == "/workers":
-            workers = []
-            for name in self.hermes.list_workers():
-                actions = self.hermes.worker_actions(name)
-                workers.append({"name": name, "actions": sorted(actions)})
-            self._json(200, {"workers": workers})
-        elif path == "/scheduler":
-            self._json(200, self.scheduler.status())
-        elif path == "/metrics":
-            self._json(200, self._prometheus_metrics())
-        else:
-            self._json(404, {"error": f"not found: {path}"})
-
-    def do_OPTIONS(self) -> None:
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-        self.send_header("Access-Control-Max-Age", "86400")
-        self.end_headers()
-
-    def do_POST(self) -> None:
-        parsed = urlparse(self.path)
-        path = parsed.path.rstrip("/")
-
-        if path == "/dispatch":
-            # API key auth for dispatch (skip if no key configured)
-            if self.api_key:
-                auth = self.headers.get("Authorization", "")
-                key = auth.replace("Bearer ", "") if auth.startswith("Bearer ") else auth
-                if key != self.api_key:
-                    self._json(401, {"error": "unauthorized"})
-                    return
-
-            body = self._read_body()
-            if body is None:
-                return
-
-            worker = body.get("worker", "")
-            action = body.get("action", "")
-            payload = body.get("payload", {})
-
-            if not worker or not action:
-                self._json(400, {"error": "worker and action required"})
-                return
-
-            try:
-                t0 = time.monotonic()
-                result = self.hermes.dispatch(worker, action, payload)
-                latency = (time.monotonic() - t0) * 1000
-                NamiAPIHandler._dispatch_count += 1
-                NamiAPIHandler._dispatch_latency_ms.append(latency)
-                if len(NamiAPIHandler._dispatch_latency_ms) > 100:
-                    NamiAPIHandler._dispatch_latency_ms = NamiAPIHandler._dispatch_latency_ms[-100:]
-                self._json(200, {"ok": True, "output": result.output, "latency_ms": round(latency, 1)})
-                if nami_ws: nami_ws.broadcast("dispatch", {"worker": worker, "action": action, "latency_ms": round(latency, 1)})
-            except ValueError as exc:
-                NamiAPIHandler._dispatch_errors += 1
-                self._json(404, {"error": str(exc)})
-            except Exception as exc:
-                NamiAPIHandler._dispatch_errors += 1
-                self._json(500, {"error": str(exc)})
-        elif path == "/webhook":
-            body = self._read_body()
-            if body is None:
-                return
-            source = body.get("source", "unknown")
-            event = body.get("event", "ping")
-            data = body.get("data", {})
-            logger.info("Webhook: source=%s event=%s", source, event)
-            if nami_ws: nami_ws.broadcast("webhook", {"source": source, "event": event, "data": data})
-            self._json(200, {"ok": True, "source": source, "event": event})
-        else:
-            self._json(404, {"error": f"not found: {path}"})
-
-    def _read_body(self) -> dict[str, Any] | None:
-        length = int(self.headers.get("Content-Length", 0))
-        if length == 0:
-            return {}
-        try:
-            data = self.rfile.read(length)
-            return json.loads(data.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            self._json(400, {"error": f"invalid JSON: {exc}"})
-            return None
-
-    def _json(self, code: int, data: dict[str, Any]) -> None:
-        body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format: str, *args: Any) -> None:
-        logger.debug("API: %s", format % args)
-
-    @classmethod
-    def _prometheus_metrics(cls) -> dict[str, Any]:
-        latencies = cls._dispatch_latency_ms[-100:]
-        avg_lat = sum(latencies) / len(latencies) if latencies else 0
-        p95_lat = sorted(latencies)[int(len(latencies) * 0.95)] if len(latencies) >= 20 else max(latencies) if latencies else 0
-        return {
-            "nami_core_requests_total": cls._request_count,
-            "nami_core_dispatch_total": cls._dispatch_count,
-            "nami_core_dispatch_errors_total": cls._dispatch_errors,
-            "nami_core_dispatch_latency_avg_ms": round(avg_lat, 1),
-            "nami_core_dispatch_latency_p95_ms": round(p95_lat, 1),
-            "nami_core_workers_count": len(cls.hermes.list_workers()),
-            "nami_core_scheduler_running": cls.scheduler.status().get("running", False),
-            "nami_core_scheduler_jobs": cls.scheduler.status().get("jobs", 0),
-        }
-
-
 def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
-    """Start the nami-core daemon: API server + scheduler."""
+    """Start the nami-core daemon: FastAPI server + scheduler."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
@@ -338,13 +195,6 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
     workers = hermes.list_workers()
     logger.info("Nami Core started — %d workers: %s", len(workers), ", ".join(workers))
 
-    # Start scheduler
-    scheduler = NamiScheduler(hermes)
-    scheduler.start()
-
-    # Wire handler references
-    NamiAPIHandler.hermes = hermes
-    NamiAPIHandler.scheduler = scheduler
     # Read API key: if env var points to a file, read it; otherwise use as-is
     api_key_raw = os.environ.get("NAMI_API_KEY", "")
     if api_key_raw and os.path.isfile(api_key_raw):
@@ -355,30 +205,34 @@ def run_server(host: str = "127.0.0.1", port: int = 8092) -> None:
             api_key = api_key_raw
     else:
         api_key = api_key_raw
-    NamiAPIHandler.api_key = api_key
 
-    # Start WebSocket server (if websockets available)
-    if nami_ws:
-        ws_port = int(os.environ.get("NAMI_WS_PORT", "8093"))
-        nami_ws.start_ws_server(host, ws_port)
+    # Create FastAPI app
+    app = create_app(hermes=hermes, scheduler=None, api_key=api_key)
 
-    # Start HTTP server
-    server = HTTPServer((host, port), NamiAPIHandler)
+    # Start scheduler (with WS broadcast reference)
+    scheduler = NamiScheduler(hermes, ws_broadcast=app.state.ws_broadcast)
+    scheduler.start()
+    app.state.scheduler = scheduler
+
+    # Start uvicorn
+    import uvicorn
+    config = uvicorn.Config(app, host=host, port=port, log_level="info", ws_ping_interval=30, ws_ping_timeout=10)
+    server = uvicorn.Server(config)
+
     logger.info("API server listening on %s:%d", host, port)
 
     # Graceful shutdown
     def _shutdown(signum: int, frame: Any) -> None:
         logger.info("Shutting down...")
         scheduler.stop()
-        if nami_ws: nami_ws.stop_ws_server()
-        server.shutdown()
+        server.should_exit = True
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
 
     try:
-        server.serve_forever()
+        server.run()
     except KeyboardInterrupt:
         _shutdown(0, None)
 
