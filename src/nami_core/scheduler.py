@@ -20,6 +20,8 @@ from typing import Any
 from nami_core.hermes import Hermes
 from nami_core.app import create_app, Metrics
 from nami_workers.registry import WorkerRegistry
+from nami_workers.scheduler_worker import set_scheduler_ref
+from nami_workers.cron_worker import set_hermes_ref, start_cron_checker
 
 logger = logging.getLogger("nami_core.scheduler")
 
@@ -170,8 +172,8 @@ def build_core(config_dir: str | None = None) -> tuple:
     from nami_workers.gold_worker import gold_worker
     from nami_workers.notification_worker import notification_worker
     from nami_workers.analytics_worker import analytics_worker
-    from nami_workers.scheduler_worker import scheduler_worker, set_scheduler_ref
-    from nami_workers.cron_worker import cron_worker, set_hermes_ref, start_cron_checker
+    from nami_workers.scheduler_worker import scheduler_worker
+    from nami_workers.cron_worker import cron_worker
     from nami_workers.email_worker import email_worker
     from nami_workers.relay_worker import relay_worker
     from nami_workers.pipeline_worker import pipeline_worker
