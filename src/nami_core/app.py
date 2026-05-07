@@ -26,6 +26,7 @@ from nami_core.runtime_v2 import (
     ToolRegistry,
     build_mutating_tool_diagnostics,
     capture_git_worktree_snapshot,
+    run_runtime_diagnostics,
 )
 
 logger = logging.getLogger("nami_core.app")
@@ -443,7 +444,8 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             result = app.state.hermes.dispatch(req.worker, req.action, req.payload)
             latency = (time.monotonic() - t0) * 1000
             snapshot_after = capture_git_worktree_snapshot() if snapshot_before is not None else None
-            diagnostics = build_mutating_tool_diagnostics(snapshot_before, snapshot_after) if snapshot_before is not None and snapshot_after is not None else None
+            diagnostic_checks = run_runtime_diagnostics() if snapshot_before is not None else None
+            diagnostics = build_mutating_tool_diagnostics(snapshot_before, snapshot_after, diagnostic_checks) if snapshot_before is not None and snapshot_after is not None else None
             Metrics.record_dispatch(latency)
             _audit_log(req.worker, req.action, request.client.host if request.client else "-", True, latency)
             job.status = "completed"

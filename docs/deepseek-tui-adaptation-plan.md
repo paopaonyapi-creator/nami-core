@@ -302,10 +302,11 @@ Completed narrow Runtime API v2 foundation on 2026-05-06:
 - Added narrow Phase 6 rollback snapshots and diagnostics for approved mutating worker tool invokes, capturing pre/post git worktree status and attaching changed-file diagnostics to runtime job results and audit entries.
 - Added dashboard visibility for mutation diagnostics in the Runtime API v2 recent jobs list, including changed/new file counts and first changed path.
 - Added dashboard snapshot detail views for mutation diagnostics with selectable recent jobs and pre/post git status output.
+- Added narrow diagnostics runners for approved mutating worker tool invokes, running Runtime API pytest checks and dashboard production builds when those project files are present.
 
 Remaining next work:
 
-- Add deeper diagnostics runners for configured Python and dashboard projects.
+- Expand diagnostics selection beyond the narrow default checks and make runner configuration explicit.
 
 ## Notes
 

@@ -21,6 +21,7 @@ Completed:
 - Approved mutating worker tool invokes capture pre/post git worktree snapshots and attach changed-file diagnostics to runtime job results and audit entries.
 - Dashboard recent jobs show mutation diagnostics summaries with changed/new file counts and first changed path.
 - Dashboard Runtime API v2 panel provides selectable mutation snapshot detail views with pre/post git status output.
+- Mutating worker diagnostics include narrow Runtime API pytest and dashboard build runners when project files are present.
 
 Verified locally:
 
@@ -32,10 +33,10 @@ Verified locally:
 Next recommended work:
 
 - Continue Phase 6 from `docs/deepseek-tui-adaptation-plan.md`.
-- Add deeper diagnostics runners for configured Python and dashboard projects.
+- Expand diagnostics selection beyond the narrow default checks and make runner configuration explicit.
 
 Suggested prompt for Codex on VPS:
 
 ```text
-อ่าน docs/codex-handoff.md และ docs/deepseek-tui-adaptation-plan.md แล้วทำ Phase 6 ต่อ: เพิ่ม diagnostics runners แบบแคบ ๆ สำหรับ Python และ dashboard projects พร้อม tests และ commit
+อ่าน docs/codex-handoff.md และ docs/deepseek-tui-adaptation-plan.md แล้วทำ Phase 6 ต่อ: ทำ diagnostics runner configuration ให้ explicit และขยายการเลือก checks แบบปลอดภัย พร้อม tests และ commit
 ```

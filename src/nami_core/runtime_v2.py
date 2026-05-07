@@ -84,16 +84,49 @@ def capture_git_worktree_snapshot(cwd: str | None = None) -> dict[str, Any]:
     }
 
 
-def build_mutating_tool_diagnostics(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+def run_runtime_diagnostics(cwd: str | None = None) -> list[dict[str, Any]]:
+    root = Path(cwd or ".")
+    commands: list[tuple[str, list[str], Path]] = []
+    if (root / "tests" / "test_runtime_api_v2.py").exists():
+        commands.append(("runtime_pytest", ["python", "-m", "pytest", "-q", "tests/test_runtime_api_v2.py"], root))
+    if (root / "nami-dashboard" / "package.json").exists():
+        commands.append(("dashboard_build", ["npm", "run", "build"], root / "nami-dashboard"))
+    results = []
+    for name, command, command_cwd in commands:
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=str(command_cwd),
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            output = (completed.stdout + completed.stderr).strip()
+            results.append({
+                "name": name,
+                "ok": completed.returncode == 0,
+                "returncode": completed.returncode,
+                "command": command,
+                "output": output[-4000:],
+            })
+        except Exception as exc:
+            results.append({"name": name, "ok": False, "command": command, "error": str(exc)})
+    return results
+
+
+def build_mutating_tool_diagnostics(before: dict[str, Any], after: dict[str, Any], checks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     before_files = set(before.get("changed_files") or [])
     after_files = set(after.get("changed_files") or [])
+    check_results = checks or []
     return {
-        "ok": bool(before.get("ok")) and bool(after.get("ok")),
+        "ok": bool(before.get("ok")) and bool(after.get("ok")) and all(check.get("ok") for check in check_results),
         "changed_files": sorted(after_files),
         "new_changed_files": sorted(after_files - before_files),
         "resolved_files": sorted(before_files - after_files),
         "before_count": len(before_files),
         "after_count": len(after_files),
+        "checks": check_results,
     }
 
 

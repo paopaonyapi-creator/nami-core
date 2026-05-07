@@ -157,6 +157,7 @@ def test_runtime_tool_invoke_runs_mutating_action_after_approval(monkeypatch):
         {"ok": True, "changed_files": ["src/nami_core/app.py"], "raw": " M src/nami_core/app.py", "error": ""},
     ])
     monkeypatch.setattr(app_module, "capture_git_worktree_snapshot", lambda: next(snapshots))
+    monkeypatch.setattr(app_module, "run_runtime_diagnostics", lambda: [{"name": "runtime_pytest", "ok": True, "returncode": 0}])
 
     client = _client_with_actions({"send"})
     response = client.post(
@@ -172,6 +173,7 @@ def test_runtime_tool_invoke_runs_mutating_action_after_approval(monkeypatch):
     assert data["job"]["result"]["snapshot"]["before"]["changed_files"] == []
     assert data["job"]["result"]["snapshot"]["after"]["changed_files"] == ["src/nami_core/app.py"]
     assert data["job"]["result"]["diagnostics"]["new_changed_files"] == ["src/nami_core/app.py"]
+    assert data["job"]["result"]["diagnostics"]["checks"][0]["name"] == "runtime_pytest"
     assert data["job"]["audit_entries"][1]["diagnostics"]["after_count"] == 1
 
 def test_runtime_mcp_servers_lists_configured_servers(tmp_path, monkeypatch):
