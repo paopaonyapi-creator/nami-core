@@ -68,7 +68,7 @@ def test_prometheus_metrics_endpoint(client):
 
 def test_dispatch_default_echo(client):
     r = client.post("/dispatch", json={"worker": "default", "action": "echo", "payload": {"msg": "hello"}}, headers=AUTH)
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
 
 def test_dispatch_no_auth(client):
     r = client.post("/dispatch", json={"worker": "default", "action": "echo", "payload": {}})
