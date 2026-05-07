@@ -266,6 +266,33 @@ body {
   line-height: 1.1;
 }
 
+.runtime-diagnostics-detail {
+  margin-top: 0.5rem;
+  border: 1px solid rgba(212, 175, 55, 0.18);
+  border-radius: 0.375rem;
+  padding: 0.5rem;
+  background: rgba(2, 6, 23, 0.24);
+}
+
+.runtime-diagnostics-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.5rem;
+}
+
+.runtime-diagnostics-grid pre {
+  max-height: 7rem;
+  overflow: auto;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  border-radius: 0.25rem;
+  padding: 0.375rem;
+  background: rgba(13, 13, 13, 0.45);
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.6875rem;
+  line-height: 1.25;
+}
+
 .runtime-event-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 7rem);

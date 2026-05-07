@@ -301,10 +301,10 @@ Completed narrow Runtime API v2 foundation on 2026-05-06:
 - Added regression coverage for Runtime API v2, MCP config loading, MCP `stdio`, `sse`, and `websocket` discovery/invocation, protected MCP tool policy enforcement, MCP reconnect/health reporting, and central MCP tool listing.
 - Added narrow Phase 6 rollback snapshots and diagnostics for approved mutating worker tool invokes, capturing pre/post git worktree status and attaching changed-file diagnostics to runtime job results and audit entries.
 - Added dashboard visibility for mutation diagnostics in the Runtime API v2 recent jobs list, including changed/new file counts and first changed path.
+- Added dashboard snapshot detail views for mutation diagnostics with selectable recent jobs and pre/post git status output.
 
 Remaining next work:
 
-- Extend Phase 6 dashboard support with full diff/result detail views for snapshot diagnostics.
 - Add deeper diagnostics runners for configured Python and dashboard projects.
 
 ## Notes

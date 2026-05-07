@@ -20,6 +20,7 @@ Completed:
 - Dashboard runtime panel support for tools, jobs, events, MCP status, MCP invocation, and reconnect.
 - Approved mutating worker tool invokes capture pre/post git worktree snapshots and attach changed-file diagnostics to runtime job results and audit entries.
 - Dashboard recent jobs show mutation diagnostics summaries with changed/new file counts and first changed path.
+- Dashboard Runtime API v2 panel provides selectable mutation snapshot detail views with pre/post git status output.
 
 Verified locally:
 
@@ -31,11 +32,10 @@ Verified locally:
 Next recommended work:
 
 - Continue Phase 6 from `docs/deepseek-tui-adaptation-plan.md`.
-- Add full dashboard diff/result detail views for mutation snapshots and diagnostics.
 - Add deeper diagnostics runners for configured Python and dashboard projects.
 
 Suggested prompt for Codex on VPS:
 
 ```text
-อ่าน docs/codex-handoff.md และ docs/deepseek-tui-adaptation-plan.md แล้วทำ Phase 6 ต่อ: เพิ่ม full dashboard diff/result detail views สำหรับ snapshot diagnostics และเพิ่ม diagnostics runners แบบแคบ ๆ พร้อม tests และ commit
+อ่าน docs/codex-handoff.md และ docs/deepseek-tui-adaptation-plan.md แล้วทำ Phase 6 ต่อ: เพิ่ม diagnostics runners แบบแคบ ๆ สำหรับ Python และ dashboard projects พร้อม tests และ commit
 ```

@@ -495,6 +495,11 @@ function runtimeDiagnosticsSummary(job: RuntimeJob): { label: string; files: str
   };
 }
 
+function runtimeSnapshotRaw(snapshot: Record<string, unknown> | undefined): string {
+  const raw = snapshot?.raw;
+  return typeof raw === "string" && raw.trim() ? raw : "No git status output";
+}
+
 function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { health: RuntimeHealth | null; tools: RuntimeTool[]; jobs: RuntimeJob[]; mcpServers: RuntimeMcpToolServer[]; apiKey: string; onRefresh: () => void }) {
   const readOnly = tools.filter(tool => tool.read_only).length;
   const latestJobs = jobs.slice(0, 5);
@@ -507,10 +512,13 @@ function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { 
   const [result, setResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [runtimeEvents, setRuntimeEvents] = useState<RuntimeStreamEvent[]>([]);
+  const [selectedJobId, setSelectedJobId] = useState("");
   const activeTool = runtimeTools.find(tool => tool.name === selectedTool) || null;
   const activeIsMcp = activeTool?.worker === "mcp";
   const needsApproval = activeTool?.permission_level === "mutating";
   const denied = activeTool?.permission_level === "dangerous" || activeTool?.permission_level === "admin_only";
+  const selectedJob = jobs.find(job => job.id === selectedJobId) || latestJobs.find(job => job.result?.diagnostics) || latestJobs[0] || null;
+  const selectedDiagnostics = selectedJob ? runtimeDiagnosticsSummary(selectedJob) : null;
 
   useEffect(() => {
     const es = new EventSource(`${API_BASE}/runtime/events`);
@@ -613,17 +621,29 @@ function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { 
             {latestJobs.map(job => {
               const diagnostics = runtimeDiagnosticsSummary(job);
               return (
-                <div key={job.id} className="runtime-row runtime-job-row" title={diagnostics?.title || job.error || job.id}>
-                  <div className="min-w-0">
+                <button key={job.id} type="button" onClick={() => setSelectedJobId(job.id)} className={`runtime-row runtime-job-row ${selectedJob?.id === job.id ? "runtime-row-active" : ""}`} title={diagnostics?.title || job.error || job.id}>
+                  <div className="min-w-0 text-left">
                     <div className="truncate">{job.requested_action}</div>
-                    {diagnostics && <div className="runtime-job-diagnostics truncate">{diagnostics.label}{diagnostics.files[0] ? ` · ${diagnostics.files[0]}` : ""}</div>}
+                    {diagnostics && <div className="runtime-job-diagnostics truncate">{diagnostics.label}{diagnostics.files[0] ? ` - ${diagnostics.files[0]}` : ""}</div>}
                   </div>
                   <span className={job.status === "completed" ? "text-green-400" : job.status === "failed" ? "text-red-400" : "text-orange-400"}>{job.status}</span>
-                </div>
+                </button>
               );
             })}
             {latestJobs.length === 0 && <div className="text-xs text-dim">No runtime jobs yet</div>}
           </div>
+          {selectedJob && selectedJob.result?.diagnostics && (
+            <div className="runtime-diagnostics-detail">
+              <div className="flex items-center justify-between gap-2 text-xs text-gold-dim mb-2">
+                <span className="truncate">{selectedJob.requested_action}</span>
+                <span>{selectedDiagnostics?.label}</span>
+              </div>
+              <div className="runtime-diagnostics-grid">
+                <pre>{runtimeSnapshotRaw(selectedJob.result.snapshot?.before)}</pre>
+                <pre>{runtimeSnapshotRaw(selectedJob.result.snapshot?.after)}</pre>
+              </div>
+            </div>
+          )}
           <div className="mt-3">
             <div className="flex items-center gap-2 text-xs text-gold-dim mb-2"><Network size={13} /> MCP servers</div>
             <div className="flex flex-col gap-1 max-h-32 overflow-y-auto">
