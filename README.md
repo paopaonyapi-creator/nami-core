@@ -116,6 +116,8 @@ Runtime diagnostics can be controlled with `NAMI_RUNTIME_DIAGNOSTIC_CHECKS`:
 - `dashboard_build` — dashboard production build only.
 - `none` — disables automatic diagnostics after approved mutating runtime tools.
 
+Environment-specific diagnostics policies can be set with `NAMI_RUNTIME_ENV` and `NAMI_RUNTIME_DIAGNOSTIC_POLICY_<ENV>`. `NAMI_RUNTIME_DIAGNOSTIC_CHECKS` remains the highest-priority override.
+
 ## Test Results
 
 ```

@@ -134,8 +134,21 @@ _DIAGNOSTIC_COMMANDS = {
 }
 
 
-def selected_runtime_diagnostic_checks(config_value: str | None = None) -> list[str]:
-    raw = config_value if config_value is not None else os.environ.get("NAMI_RUNTIME_DIAGNOSTIC_CHECKS", "runtime_pytest,dashboard_build")
+def runtime_diagnostic_policy_value(config_value: str | None = None, environment: str | None = None) -> str:
+    if config_value is not None:
+        return config_value
+    explicit = os.environ.get("NAMI_RUNTIME_DIAGNOSTIC_CHECKS")
+    if explicit is not None:
+        return explicit
+    env_name = (environment or os.environ.get("NAMI_RUNTIME_ENV") or os.environ.get("NAMI_ENV") or "default").strip().upper().replace("-", "_")
+    env_policy = os.environ.get(f"NAMI_RUNTIME_DIAGNOSTIC_POLICY_{env_name}")
+    if env_policy is not None:
+        return env_policy
+    return os.environ.get("NAMI_RUNTIME_DIAGNOSTIC_POLICY_DEFAULT", "runtime_pytest,dashboard_build")
+
+
+def selected_runtime_diagnostic_checks(config_value: str | None = None, environment: str | None = None) -> list[str]:
+    raw = runtime_diagnostic_policy_value(config_value, environment)
     names = [item.strip() for item in raw.split(",") if item.strip()]
     if not names or names == ["none"]:
         return []

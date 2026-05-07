@@ -10,6 +10,7 @@ Current branch has completed the Runtime API v2, MCP foundation, and narrow Phas
 - `379ff85 Wire dashboard recovery preview endpoint`
 - Add authenticated runtime recovery restore
 - Add runtime recovery diff preview
+- Add environment-specific diagnostics policies
 
 Completed:
 
@@ -26,6 +27,7 @@ Completed:
 - Dashboard Runtime API v2 panel provides selectable mutation snapshot detail views with pre/post git status output.
 - Mutating worker diagnostics include narrow Runtime API pytest and dashboard build runners when project files are present.
 - Diagnostics runner selection is explicit through `NAMI_RUNTIME_DIAGNOSTIC_CHECKS` with unknown checks ignored and `none` disabling runners.
+- Environment-specific diagnostics policies can be selected through `NAMI_RUNTIME_ENV` and `NAMI_RUNTIME_DIAGNOSTIC_POLICY_<ENV>`, with `NAMI_RUNTIME_DIAGNOSTIC_CHECKS` still taking priority.
 - Deployment docs describe runtime diagnostics check selection for VPS/runtime operations.
 - Mutation diagnostics include recovery metadata for manual review, candidate files, and safe inspection commands.
 - Dashboard Runtime API v2 detail view fetches and shows recovery preview metadata without automatic restore.
@@ -44,7 +46,7 @@ Verified locally:
 Next recommended work:
 
 - Phase 6 is complete in the current narrow scope.
-- Future work can add environment-specific diagnostics policies.
+- Future work can focus on broader restore safeguards and operational hardening.
 
 Suggested prompt for Codex on VPS:
 

@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 import nami_core.app as app_module
 from nami_core.app import create_app
 from nami_core.hermes import Hermes
-from nami_core.runtime_v2 import RuntimeEvent, RuntimeJobStore, ToolRegistry, selected_runtime_diagnostic_checks
+from nami_core.runtime_v2 import RuntimeEvent, RuntimeJobStore, ToolRegistry, runtime_diagnostic_policy_value, selected_runtime_diagnostic_checks
 from nami_harness.runtime import HarnessContext, HarnessResult, HarnessRuntime
 
 
@@ -142,6 +142,26 @@ def test_runtime_diagnostic_check_selection():
     assert selected_runtime_diagnostic_checks("runtime_pytest,unknown") == ["runtime_pytest"]
     assert selected_runtime_diagnostic_checks("none") == []
     assert selected_runtime_diagnostic_checks("") == []
+
+
+def test_runtime_diagnostic_policy_selection_by_environment(monkeypatch):
+    monkeypatch.delenv("NAMI_RUNTIME_DIAGNOSTIC_CHECKS", raising=False)
+    monkeypatch.setenv("NAMI_RUNTIME_DIAGNOSTIC_POLICY_DEFAULT", "runtime_pytest")
+    monkeypatch.setenv("NAMI_RUNTIME_DIAGNOSTIC_POLICY_PRODUCTION", "dashboard_build")
+    monkeypatch.setenv("NAMI_RUNTIME_ENV", "production")
+
+    assert runtime_diagnostic_policy_value() == "dashboard_build"
+    assert selected_runtime_diagnostic_checks() == ["dashboard_build"]
+    assert selected_runtime_diagnostic_checks(environment="default") == ["runtime_pytest"]
+
+
+def test_runtime_diagnostic_checks_override_environment_policy(monkeypatch):
+    monkeypatch.setenv("NAMI_RUNTIME_DIAGNOSTIC_CHECKS", "none")
+    monkeypatch.setenv("NAMI_RUNTIME_DIAGNOSTIC_POLICY_PRODUCTION", "dashboard_build")
+    monkeypatch.setenv("NAMI_RUNTIME_ENV", "production")
+
+    assert runtime_diagnostic_policy_value() == "none"
+    assert selected_runtime_diagnostic_checks() == []
 
 
 def test_runtime_tool_invoke_requires_approval_for_mutating_action():
