@@ -115,6 +115,12 @@ quality:
 
 Secrets are loaded from `/etc/nami-harness/` (root-only 700/600).
 
+Rate limits (per-IP, sliding 60-second window) are tunable through environment variables:
+
+- `NAMI_READ_RATE_LIMIT_PER_MIN` (default `120`) — read endpoints (`/workers`, `/runtime/tools`, `/runtime/mcp/*`).
+- `NAMI_DISPATCH_RATE_LIMIT_PER_MIN` (default `60`) — `/dispatch` and `/dispatch/batch` requests.
+- `NAMI_DISPATCH_RATE_LIMIT` (default `30`) — per-worker cap for any single worker.
+
 Runtime diagnostics can be controlled with `NAMI_RUNTIME_DIAGNOSTIC_CHECKS`:
 
 - `runtime_pytest,dashboard_build` — default; runs Runtime API pytest and dashboard production build when project files are present.

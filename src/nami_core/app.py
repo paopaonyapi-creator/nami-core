@@ -227,8 +227,14 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
     )
 
     ws_manager = WSManager()
-    dispatch_limiter = RateLimiter(max_requests=60, window_seconds=60)
-    read_limiter = RateLimiter(max_requests=120, window_seconds=60)
+    dispatch_limiter = RateLimiter(
+        max_requests=int(os.environ.get("NAMI_DISPATCH_RATE_LIMIT_PER_MIN", "60")),
+        window_seconds=60,
+    )
+    read_limiter = RateLimiter(
+        max_requests=int(os.environ.get("NAMI_READ_RATE_LIMIT_PER_MIN", "120")),
+        window_seconds=60,
+    )
     worker_limiters: dict[str, RateLimiter] = {}
     worker_rate_max = int(os.environ.get("NAMI_DISPATCH_RATE_LIMIT", "30"))
     webhook_secret = os.environ.get("NAMI_WEBHOOK_SECRET", "")
