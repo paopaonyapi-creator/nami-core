@@ -13,4 +13,12 @@ servers:
     transport: sse
     url: http://127.0.0.1:8001/sse
     enabled: false
+    tool_prefix: mcp.remote
     permission_level: read_only
+
+  - name: websocket_tools
+    transport: websocket
+    url: ws://127.0.0.1:8002/mcp
+    enabled: false
+    tool_prefix: mcp.ws
+    permission_level: protected_read

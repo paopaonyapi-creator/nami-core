@@ -223,13 +223,13 @@ servers:
 
     assert response.status_code == 200
     data = response.json()
-    assert data["discovery_status"] == "not_connected"
+    assert data["discovery_status"] == "error"
     assert data["tool_count"] == 0
     assert data["tools"] == []
     assert data["servers"][0]["server"] == "remote_search"
     assert data["servers"][0]["tool_namespace"] == "mcp.remote"
-    assert data["servers"][0]["status"] == "unsupported"
-    assert "live client support is not implemented" in data["servers"][0]["status_detail"]
+    assert data["servers"][0]["status"] == "error"
+    assert data["servers"][0]["status_detail"]
     assert data["servers"][1]["enabled"] is False
     assert data["servers"][1]["status_detail"] == "server disabled in config"
 
@@ -332,3 +332,140 @@ servers:
         response = client.post("/runtime/mcp/tools/invoke", json={"tool": "mcp.protected.read_secret", "payload": {}})
         assert response.status_code == 401
         assert response.json()["detail"] == "api key required"
+
+
+def test_runtime_mcp_sse_discovers_and_invokes_tools(tmp_path, monkeypatch):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import json
+    import threading
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            msg = json.loads(self.rfile.read(length).decode("utf-8"))
+            method = msg.get("method")
+            if method == "tools/list":
+                result = {"tools": [{"name": "search", "description": "Search", "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}}}]}
+            elif method == "tools/call":
+                result = {"content": [{"type": "text", "text": msg.get("params", {}).get("arguments", {}).get("query", "")}], "isError": False}
+            else:
+                result = {}
+            body = "data: " + json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result}) + "\n\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(body.encode("utf-8"))))
+            self.end_headers()
+            self.wfile.write(body.encode("utf-8"))
+
+        def log_message(self, format, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    config_file = tmp_path / "mcp.yaml"
+    config_file.write_text(
+        f"""
+servers:
+  - name: remote_search
+    transport: sse
+    url: http://127.0.0.1:{server.server_port}/sse
+    tool_prefix: mcp.remote
+    permission_level: read_only
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAMI_MCP_CONFIG_FILE", str(config_file))
+
+    try:
+        with _client() as client:
+            tools_response = client.get("/runtime/mcp/tools")
+            assert tools_response.status_code == 200
+            tools_data = tools_response.json()
+            assert tools_data["discovery_status"] == "connected"
+            assert tools_data["tools"][0]["name"] == "mcp.remote.search"
+            assert tools_data["servers"][0]["status"] == "connected"
+
+            invoke_response = client.post("/runtime/mcp/tools/invoke", json={"tool": "mcp.remote.search", "payload": {"query": "nami"}})
+            assert invoke_response.status_code == 200
+            assert invoke_response.json()["output"]["content"][0]["text"] == "nami"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+
+
+def test_runtime_mcp_websocket_discovers_tools(tmp_path, monkeypatch):
+    import asyncio
+    import json
+    import threading
+
+    import websockets
+
+    async def handler(socket):
+        async for raw in socket:
+            msg = json.loads(raw)
+            if "id" not in msg:
+                continue
+            method = msg.get("method")
+            if method == "tools/list":
+                result = {"tools": [{"name": "ping", "description": "Ping", "inputSchema": {"type": "object"}}]}
+            elif method == "tools/call":
+                result = {"content": [{"type": "text", "text": "pong"}], "isError": False}
+            else:
+                result = {}
+            await socket.send(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result}))
+
+    loop = asyncio.new_event_loop()
+    ready = threading.Event()
+    holder = {}
+
+    async def start_server():
+        server = await websockets.serve(handler, "127.0.0.1", 0)
+        holder["server"] = server
+        holder["port"] = server.sockets[0].getsockname()[1]
+        ready.set()
+
+    def run_loop():
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(start_server())
+        loop.run_forever()
+        server = holder.get("server")
+        if server is not None:
+            server.close()
+            loop.run_until_complete(server.wait_closed())
+        loop.close()
+
+    thread = threading.Thread(target=run_loop, daemon=True)
+    thread.start()
+    assert ready.wait(5)
+
+    config_file = tmp_path / "mcp.yaml"
+    config_file.write_text(
+        f"""
+servers:
+  - name: ws_tools
+    transport: websocket
+    url: ws://127.0.0.1:{holder["port"]}
+    tool_prefix: mcp.ws
+    permission_level: read_only
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAMI_MCP_CONFIG_FILE", str(config_file))
+
+    try:
+        with _client() as client:
+            tools_response = client.get("/runtime/mcp/tools")
+            assert tools_response.status_code == 200
+            tools_data = tools_response.json()
+            assert tools_data["discovery_status"] == "connected"
+            assert tools_data["tools"][0]["name"] == "mcp.ws.ping"
+
+            invoke_response = client.post("/runtime/mcp/tools/invoke", json={"tool": "mcp.ws.ping", "payload": {}})
+            assert invoke_response.status_code == 200
+            assert invoke_response.json()["output"]["content"][0]["text"] == "pong"
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(5)

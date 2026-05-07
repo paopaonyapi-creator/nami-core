@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from nami_core.mcp_config import McpConfig, McpServerConfig
 from nami_core.runtime_v2 import PolicyCategory, ToolMetadata
@@ -63,6 +65,22 @@ class McpServerRuntime:
             "tools": [tool.to_dict() for tool in self.tools],
             "tool_count": len(self.tools),
         }
+
+
+class McpSession(Protocol):
+    server: McpServerConfig
+
+    async def start(self) -> None:
+        ...
+
+    async def close(self) -> None:
+        ...
+
+    async def list_tools(self) -> list[dict[str, Any]]:
+        ...
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        ...
 
 
 class StdioMcpSession:
@@ -139,10 +157,123 @@ class StdioMcpSession:
         return await self.request("tools/call", {"name": name, "arguments": arguments})
 
 
+class HttpMcpSession:
+    def __init__(self, server: McpServerConfig) -> None:
+        self.server = server
+        self._next_id = 1
+        self._lock = asyncio.Lock()
+
+    async def start(self) -> None:
+        await self.request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "nami-core", "version": "0.13.0"}})
+
+    async def close(self) -> None:
+        return
+
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> Any:
+        if not self.server.url:
+            raise McpClientError(f"{self.server.transport} MCP server requires url: {self.server.name}")
+        async with self._lock:
+            request_id = self._next_id
+            self._next_id += 1
+            payload = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}}
+            return await asyncio.to_thread(self._post_json, payload)
+
+    def _post_json(self, payload: dict[str, Any]) -> Any:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(self.server.url or "", data=data, headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                body = response.read().decode("utf-8")
+        except urllib.error.URLError as exc:
+            raise McpClientError(str(exc)) from exc
+        parsed = self._parse_response(body)
+        if parsed.get("id") != payload["id"]:
+            raise McpClientError(f"MCP response id mismatch from {self.server.name}")
+        if "error" in parsed:
+            raise McpClientError(str(parsed["error"]))
+        return parsed.get("result", {})
+
+    def _parse_response(self, body: str) -> dict[str, Any]:
+        stripped = body.strip()
+        if stripped.startswith("data:"):
+            events = [line[5:].strip() for line in stripped.splitlines() if line.startswith("data:")]
+            stripped = events[-1] if events else "{}"
+        parsed = json.loads(stripped)
+        if not isinstance(parsed, dict):
+            raise McpClientError(f"invalid MCP response from {self.server.name}")
+        return parsed
+
+    async def list_tools(self) -> list[dict[str, Any]]:
+        result = await self.request("tools/list")
+        tools = result.get("tools", [])
+        return tools if isinstance(tools, list) else []
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        return await self.request("tools/call", {"name": name, "arguments": arguments})
+
+
+class WebSocketMcpSession:
+    def __init__(self, server: McpServerConfig) -> None:
+        self.server = server
+        self._socket: Any | None = None
+        self._next_id = 1
+        self._lock = asyncio.Lock()
+
+    async def start(self) -> None:
+        if self._socket is not None:
+            return
+        if not self.server.url:
+            raise McpClientError(f"websocket MCP server requires url: {self.server.name}")
+        try:
+            import websockets
+        except ImportError as exc:
+            raise McpClientError("websocket MCP transport requires the websockets package") from exc
+        self._socket = await websockets.connect(self.server.url)
+        await self.request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "nami-core", "version": "0.13.0"}})
+        await self.notify("notifications/initialized", {})
+
+    async def close(self) -> None:
+        if self._socket is None:
+            return
+        socket = self._socket
+        self._socket = None
+        await socket.close()
+
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> Any:
+        if self._socket is None:
+            raise McpClientError(f"MCP server is not connected: {self.server.name}")
+        async with self._lock:
+            request_id = self._next_id
+            self._next_id += 1
+            payload = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}}
+            await self._socket.send(json.dumps(payload, ensure_ascii=False))
+            while True:
+                response = json.loads(await asyncio.wait_for(self._socket.recv(), timeout=10))
+                if response.get("id") != request_id:
+                    continue
+                if "error" in response:
+                    raise McpClientError(str(response["error"]))
+                return response.get("result", {})
+
+    async def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+        if self._socket is None:
+            raise McpClientError(f"MCP server is not connected: {self.server.name}")
+        payload = {"jsonrpc": "2.0", "method": method, "params": params or {}}
+        await self._socket.send(json.dumps(payload, ensure_ascii=False))
+
+    async def list_tools(self) -> list[dict[str, Any]]:
+        result = await self.request("tools/list")
+        tools = result.get("tools", [])
+        return tools if isinstance(tools, list) else []
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        return await self.request("tools/call", {"name": name, "arguments": arguments})
+
+
 class McpClientManager:
     def __init__(self, config: McpConfig) -> None:
         self.config = config
-        self._sessions: dict[str, StdioMcpSession] = {}
+        self._sessions: dict[str, McpSession] = {}
         self._servers: dict[str, McpServerRuntime] = {server.name: McpServerRuntime(server=server, status=server.status(), status_detail=server.status_detail()) for server in config.servers}
         self._tools: dict[str, McpTool] = {}
 
@@ -158,14 +289,17 @@ class McpClientManager:
                 runtime.status = "disabled"
                 runtime.status_detail = "server disabled in config"
                 continue
-            if server.transport != "stdio":
-                runtime.status = "unsupported"
-                runtime.status_detail = f"{server.transport} MCP transport is configured but live client support is not implemented"
-                continue
             try:
                 session = self._sessions.get(server.name)
                 if session is None:
-                    session = StdioMcpSession(server)
+                    if server.transport == "stdio":
+                        session = StdioMcpSession(server)
+                    elif server.transport == "sse":
+                        session = HttpMcpSession(server)
+                    elif server.transport == "websocket":
+                        session = WebSocketMcpSession(server)
+                    else:
+                        raise McpClientError(f"unsupported MCP transport: {server.transport}")
                     self._sessions[server.name] = session
                 await session.start()
                 discovered = []
