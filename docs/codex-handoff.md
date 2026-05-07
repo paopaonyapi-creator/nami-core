@@ -7,6 +7,7 @@ Current branch has completed the Runtime API v2, MCP foundation, and narrow Phas
 - `81ffdc1 Add MCP reconnect health controls`
 - `537d81b Expose MCP tools in runtime registry`
 - `e6afa81 Add Codex handoff notes`
+- `379ff85 Wire dashboard recovery preview endpoint`
 
 Completed:
 
@@ -25,8 +26,9 @@ Completed:
 - Diagnostics runner selection is explicit through `NAMI_RUNTIME_DIAGNOSTIC_CHECKS` with unknown checks ignored and `none` disabling runners.
 - Deployment docs describe runtime diagnostics check selection for VPS/runtime operations.
 - Mutation diagnostics include recovery metadata for manual review, candidate files, and safe inspection commands.
-- Dashboard Runtime API v2 detail view shows recovery preview metadata without automatic restore.
+- Dashboard Runtime API v2 detail view fetches and shows recovery preview metadata without automatic restore.
 - `/runtime/jobs/{job_id}/recovery/preview` exposes recovery metadata as a read-only API response with `restore_supported: false`.
+- TypeScript SDK exposes `runtimeRecoveryPreview(jobId)` for dashboard and future clients.
 
 Verified locally:
 

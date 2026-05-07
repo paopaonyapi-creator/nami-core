@@ -307,6 +307,7 @@ Completed narrow Runtime API v2 foundation on 2026-05-06:
 - Documented deployment configuration for runtime diagnostics check selection.
 - Added recovery metadata to mutation diagnostics, including manual-review flags, candidate files, new files, and safe suggested inspection commands.
 - Added dashboard recovery preview for mutation diagnostics, surfacing candidate files and safe inspection commands without automatic restore.
+- Wired the dashboard recovery preview to the read-only recovery preview endpoint and exposed the endpoint through the TypeScript SDK.
 - Added `/runtime/jobs/{job_id}/recovery/preview` to expose recovery metadata through a read-only Runtime API endpoint.
 
 Remaining next work:
