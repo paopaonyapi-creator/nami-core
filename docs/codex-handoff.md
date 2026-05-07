@@ -11,6 +11,7 @@ Current branch has completed the Runtime API v2, MCP foundation, and narrow Phas
 - Add authenticated runtime recovery restore
 - Add runtime recovery diff preview
 - Add environment-specific diagnostics policies
+- Add stale recovery candidate restore safeguards
 
 Completed:
 
@@ -35,6 +36,7 @@ Completed:
 - TypeScript SDK exposes `runtimeRecoveryPreview(jobId)` for dashboard and future clients.
 - Authenticated recovery restore is available through `POST /runtime/jobs/{job_id}/recovery/restore`, emits runtime recovery events, records audit entries, and is exposed in the dashboard and TypeScript SDK.
 - Read-only recovery diff preview is available through `GET /runtime/jobs/{job_id}/recovery/diff`, surfaced in the dashboard before restore, and exposed in the TypeScript SDK.
+- Recovery restore rejects stale candidate files when the current worktree no longer reports those paths as changed.
 
 Verified locally:
 
@@ -46,7 +48,7 @@ Verified locally:
 Next recommended work:
 
 - Phase 6 is complete in the current narrow scope.
-- Future work can focus on broader restore safeguards and operational hardening.
+- Future work can focus on operational hardening.
 
 Suggested prompt for Codex on VPS:
 

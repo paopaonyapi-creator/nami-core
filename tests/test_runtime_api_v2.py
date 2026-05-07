@@ -261,6 +261,7 @@ def test_runtime_recovery_restore_restores_candidate_files(monkeypatch):
     snapshots = iter([
         {"ok": True, "changed_files": [], "raw": "", "error": ""},
         {"ok": True, "changed_files": ["src/nami_core/app.py"], "raw": " M src/nami_core/app.py", "error": ""},
+        {"ok": True, "changed_files": ["src/nami_core/app.py"], "raw": " M src/nami_core/app.py", "error": ""},
     ])
     monkeypatch.setattr(app_module, "capture_git_worktree_snapshot", lambda: next(snapshots))
     monkeypatch.setattr(app_module, "run_runtime_diagnostics", lambda: [])
@@ -284,6 +285,27 @@ def test_runtime_recovery_restore_restores_candidate_files(monkeypatch):
     assert detail["audit_entries"][-1]["event"] == "job.recovery_restored"
     assert detail["progress_events"][-1]["type"] == "job.recovery_restored"
 
+
+def test_runtime_recovery_restore_rejects_stale_candidate_files(monkeypatch):
+    snapshots = iter([
+        {"ok": True, "changed_files": [], "raw": "", "error": ""},
+        {"ok": True, "changed_files": ["src/nami_core/app.py"], "raw": " M src/nami_core/app.py", "error": ""},
+        {"ok": True, "changed_files": [], "raw": "", "error": ""},
+    ])
+    monkeypatch.setattr(app_module, "capture_git_worktree_snapshot", lambda: next(snapshots))
+    monkeypatch.setattr(app_module, "run_runtime_diagnostics", lambda: [])
+
+    client = _client_with_actions({"send"})
+    response = client.post(
+        "/runtime/tools/invoke",
+        headers={"Authorization": "Bearer test-key"},
+        json={"worker": "status", "action": "send", "payload": {}, "approved": True},
+    )
+    job_id = response.json()["job"]["id"]
+
+    restore = client.post(f"/runtime/jobs/{job_id}/recovery/restore", headers={"Authorization": "Bearer test-key"})
+    assert restore.status_code == 409
+    assert restore.json()["detail"]["missing_candidate_files"] == ["src/nami_core/app.py"]
 def test_runtime_mcp_servers_lists_configured_servers(tmp_path, monkeypatch):
     config_file = tmp_path / "mcp.yaml"
     config_file.write_text(

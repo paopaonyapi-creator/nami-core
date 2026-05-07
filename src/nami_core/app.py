@@ -552,6 +552,11 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         candidate_files = recovery.get("candidate_files") or []
         if not candidate_files:
             raise HTTPException(status_code=409, detail="no recovery candidate files")
+        current_snapshot = capture_git_worktree_snapshot()
+        current_changed = set(current_snapshot.get("changed_files") or [])
+        missing_candidates = [path for path in candidate_files if path not in current_changed]
+        if missing_candidates:
+            raise HTTPException(status_code=409, detail={"error": "recovery candidates no longer match worktree", "missing_candidate_files": missing_candidates})
         result = restore_git_worktree_files(candidate_files)
         event = RuntimeEvent(type="job.recovery_restored" if result.get("ok") else "job.recovery_failed", job_id=job.id, data=result)
         job.progress_events.append(event)
