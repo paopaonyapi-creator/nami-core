@@ -114,3 +114,33 @@ allowed_actions:
 
     assert "worker_a" in registry.list_workers()
     assert "worker_b" in registry.list_workers()
+
+def test_registry_skips_non_worker_yaml(tmp_path):
+    from pathlib import Path
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+
+    (config_dir / "worker_a.yaml").write_text(
+        """
+name: worker_a
+allowed_agents:
+  - hermes
+allowed_actions:
+  - act
+""",
+        encoding="utf-8",
+    )
+    (config_dir / "mcp_servers.example.yaml").write_text(
+        """
+servers:
+  - name: local_tools
+    transport: stdio
+""",
+        encoding="utf-8",
+    )
+
+    registry = WorkerRegistry()
+    registry.load_from_directory(config_dir)
+
+    assert "worker_a" in registry.list_workers()
+    assert "mcp_servers.example" not in registry.list_workers()

@@ -87,7 +87,13 @@ class WorkerRegistry:
         if not config_dir.exists():
             return
 
+        import yaml as _yaml
+
         for yaml_file in sorted(config_dir.glob("*.yaml")):
+            with yaml_file.open(encoding="utf-8") as f:
+                raw = _yaml.safe_load(f)
+            if not isinstance(raw, dict) or "name" not in raw:
+                continue
             config = load_harness_config(yaml_file)
             if config.name not in self._workers:
                 self._workers[config.name] = WorkerEntry(
