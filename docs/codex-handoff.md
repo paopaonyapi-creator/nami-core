@@ -37,10 +37,11 @@ Completed:
 - Authenticated recovery restore is available through `POST /runtime/jobs/{job_id}/recovery/restore`, emits runtime recovery events, records audit entries, and is exposed in the dashboard and TypeScript SDK.
 - Read-only recovery diff preview is available through `GET /runtime/jobs/{job_id}/recovery/diff`, surfaced in the dashboard before restore, and exposed in the TypeScript SDK.
 - Recovery restore rejects stale candidate files when the current worktree no longer reports those paths as changed.
+- Recovery restore events are broadcast through the runtime WebSocket channel for dashboard/live consumers.
 
 Verified locally:
 
-- `python -m pytest -q tests\test_runtime_api_v2.py tests\test_mcp_config.py tests\test_scheduler_api.py` -> `44 passed`
+- `python -m pytest -q tests\test_runtime_api_v2.py tests\test_mcp_config.py tests\test_scheduler_api.py` -> `50 passed`
 - `python -m py_compile src\nami_core\app.py src\nami_core\mcp_client.py src\nami_core\mcp_config.py src\nami_core\runtime_v2.py`
 - `npm run build` in `nami-dashboard`
 - `git diff --check`
@@ -53,5 +54,5 @@ Next recommended work:
 Suggested prompt for Codex on VPS:
 
 ```text
-อ่าน docs/codex-handoff.md และ docs/deepseek-tui-adaptation-plan.md แล้วเลือกงานถัดไป: เพิ่ม authenticated one-click restore workflows หรือ environment-specific diagnostics policies พร้อม tests และ commit
+อ่าน docs/codex-handoff.md และ docs/deepseek-tui-adaptation-plan.md แล้วเลือกงานถัดไปด้าน operational hardening พร้อม tests และ commit
 ```

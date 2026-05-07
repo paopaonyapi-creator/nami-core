@@ -563,6 +563,7 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         job.audit_entries.append({"event": event.type, "worker": "runtime", "action": "recovery.restore", "ok": result.get("ok"), "timestamp": event.timestamp, "result": result})
         app.state.runtime_jobs.save(job)
         record_runtime_event(event)
+        await ws_manager.broadcast("runtime.event", event.to_dict())
         if not result.get("ok"):
             raise HTTPException(status_code=500, detail=result)
         return {"ok": True, "job_id": job.id, **result}
