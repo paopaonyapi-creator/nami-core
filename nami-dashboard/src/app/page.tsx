@@ -27,6 +27,7 @@ interface RateLimitInfo { worker: string; max_requests: number; window_seconds: 
 interface RuntimeHealth { status: string; service: string; tools: number; jobs: number; timestamp: string }
 interface RuntimeTool { name: string; description: string; permission_level: string; timeout_seconds: number; audit_category: string; read_only: boolean; worker: string | null; action: string | null }
 interface RuntimeRecovery { manual_review_required?: boolean; candidate_files?: string[]; new_candidate_files?: string[]; suggested_commands?: string[] }
+interface RuntimeRecoveryPreview { job_id: string; requested_action: string; manual_review_required: boolean; candidate_files: string[]; new_candidate_files: string[]; suggested_commands: string[]; restore_supported: boolean }
 interface RuntimeDiagnostics { ok?: boolean; changed_files?: string[]; new_changed_files?: string[]; resolved_files?: string[]; before_count?: number; after_count?: number; recovery?: RuntimeRecovery }
 interface RuntimeJobResult { diagnostics?: RuntimeDiagnostics; snapshot?: { before?: Record<string, unknown>; after?: Record<string, unknown> }; [key: string]: unknown }
 interface RuntimeJob { id: string; status: string; requested_action: string; updated_at: string; result?: RuntimeJobResult | null; error?: string | null; audit_entries?: Record<string, unknown>[] }
@@ -501,7 +502,7 @@ function runtimeSnapshotRaw(snapshot: Record<string, unknown> | undefined): stri
   return typeof raw === "string" && raw.trim() ? raw : "No git status output";
 }
 
-function runtimeRecoveryPreview(recovery: RuntimeRecovery | undefined): { files: string[]; commands: string[] } {
+function runtimeRecoveryPreview(recovery: RuntimeRecovery | RuntimeRecoveryPreview | undefined): { files: string[]; commands: string[] } {
   return {
     files: recovery?.candidate_files || [],
     commands: recovery?.suggested_commands || [],
@@ -521,13 +522,27 @@ function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { 
   const [loading, setLoading] = useState(false);
   const [runtimeEvents, setRuntimeEvents] = useState<RuntimeStreamEvent[]>([]);
   const [selectedJobId, setSelectedJobId] = useState("");
+  const [recoveryPreview, setRecoveryPreview] = useState<RuntimeRecoveryPreview | null>(null);
   const activeTool = runtimeTools.find(tool => tool.name === selectedTool) || null;
   const activeIsMcp = activeTool?.worker === "mcp";
   const needsApproval = activeTool?.permission_level === "mutating";
   const denied = activeTool?.permission_level === "dangerous" || activeTool?.permission_level === "admin_only";
   const selectedJob = jobs.find(job => job.id === selectedJobId) || latestJobs.find(job => job.result?.diagnostics) || latestJobs[0] || null;
   const selectedDiagnostics = selectedJob ? runtimeDiagnosticsSummary(selectedJob) : null;
-  const selectedRecovery = runtimeRecoveryPreview(selectedJob?.result?.diagnostics?.recovery);
+  const selectedRecovery = runtimeRecoveryPreview(recoveryPreview || selectedJob?.result?.diagnostics?.recovery);
+
+  useEffect(() => {
+    if (!selectedJob?.id || !selectedJob.result?.diagnostics) {
+      setRecoveryPreview(null);
+      return;
+    }
+    let active = true;
+    fetch(`${API_BASE}/runtime/jobs/${encodeURIComponent(selectedJob.id)}/recovery/preview`)
+      .then(response => response.ok ? response.json() : null)
+      .then((data: RuntimeRecoveryPreview | null) => { if (active) setRecoveryPreview(data); })
+      .catch(() => { if (active) setRecoveryPreview(null); });
+    return () => { active = false; };
+  }, [selectedJob?.id, selectedJob?.result?.diagnostics]);
 
   useEffect(() => {
     const es = new EventSource(`${API_BASE}/runtime/events`);
