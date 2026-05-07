@@ -292,7 +292,11 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         ip = request.client.host if request.client else "-"
         if not read_limiter.is_allowed(ip):
             raise HTTPException(status_code=429, detail="rate limit exceeded")
-        return {"tools": [tool.to_dict() for tool in app.state.tool_registry.list()]}
+        await app.state.mcp_client.discover()
+        registry_tools = [tool.to_dict() for tool in app.state.tool_registry.list()]
+        mcp_tools = [tool.to_metadata().to_dict() for tool in app.state.mcp_client.tools()]
+        tools = sorted([*registry_tools, *mcp_tools], key=lambda tool: tool["name"])
+        return {"tools": tools}
 
     @app.get("/runtime/mcp/servers")
     async def runtime_mcp_servers(request: Request):

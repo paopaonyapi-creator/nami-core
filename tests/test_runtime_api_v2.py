@@ -283,6 +283,15 @@ servers:
         assert tools_data["tools"][0]["permission_level"] == "read_only"
         assert tools_data["servers"][0]["status"] == "connected"
 
+        registry_response = client.get("/runtime/tools")
+        assert registry_response.status_code == 200
+        registry_tools = registry_response.json()["tools"]
+        assert [tool["name"] for tool in registry_tools] == ["mcp.local.echo", "status.health"]
+        mcp_tool = registry_tools[0]
+        assert mcp_tool["worker"] == "mcp"
+        assert mcp_tool["action"] == "mcp.local.echo"
+        assert mcp_tool["audit_category"] == "mcp_tool_call"
+
         invoke_response = client.post("/runtime/mcp/tools/invoke", json={"tool": "mcp.local.echo", "payload": {"value": "hello"}})
         assert invoke_response.status_code == 200
         invoke_data = invoke_response.json()
