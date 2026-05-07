@@ -85,6 +85,25 @@ def capture_git_worktree_snapshot(cwd: str | None = None) -> dict[str, Any]:
     }
 
 
+def recovery_git_diff_preview(paths: list[str], cwd: str | None = None) -> dict[str, Any]:
+    root = Path(cwd or ".").resolve()
+    files = []
+    for path in paths:
+        candidate = (root / path).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            files.append({"path": path, "ok": False, "diff": "", "error": "path outside repository"})
+            continue
+        completed = subprocess.run(["git", "diff", "--", path], cwd=str(root), check=False, capture_output=True, text=True, timeout=10)
+        diff = completed.stdout[-12000:]
+        if completed.returncode == 0 and not diff and candidate.exists():
+            completed = subprocess.run(["git", "diff", "--no-index", "--", os.devnull, path], cwd=str(root), check=False, capture_output=True, text=True, timeout=10)
+            diff = completed.stdout[-12000:]
+        files.append({"path": path, "ok": completed.returncode in (0, 1), "diff": diff, "error": completed.stderr.strip()})
+    return {"ok": all(file.get("ok") for file in files), "files": files}
+
+
 def restore_git_worktree_files(paths: list[str], cwd: str | None = None) -> dict[str, Any]:
     root = Path(cwd or ".").resolve()
     restored = []

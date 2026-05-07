@@ -192,6 +192,30 @@ def test_runtime_tool_invoke_runs_mutating_action_after_approval(monkeypatch):
     assert data["job"]["audit_entries"][1]["diagnostics"]["after_count"] == 1
 
 
+def test_runtime_recovery_diff_shows_candidate_file_diff(monkeypatch):
+    snapshots = iter([
+        {"ok": True, "changed_files": [], "raw": "", "error": ""},
+        {"ok": True, "changed_files": ["src/nami_core/app.py"], "raw": " M src/nami_core/app.py", "error": ""},
+    ])
+    monkeypatch.setattr(app_module, "capture_git_worktree_snapshot", lambda: next(snapshots))
+    monkeypatch.setattr(app_module, "run_runtime_diagnostics", lambda: [])
+    monkeypatch.setattr(app_module, "recovery_git_diff_preview", lambda paths: {"ok": True, "files": [{"path": paths[0], "ok": True, "diff": "diff --git a/src/nami_core/app.py b/src/nami_core/app.py", "error": ""}]})
+
+    client = _client_with_actions({"send"})
+    response = client.post(
+        "/runtime/tools/invoke",
+        headers={"Authorization": "Bearer test-key"},
+        json={"worker": "status", "action": "send", "payload": {}, "approved": True},
+    )
+    job_id = response.json()["job"]["id"]
+
+    diff = client.get(f"/runtime/jobs/{job_id}/recovery/diff")
+    assert diff.status_code == 200
+    diff_data = diff.json()
+    assert diff_data["ok"] is True
+    assert diff_data["files"][0]["path"] == "src/nami_core/app.py"
+    assert diff_data["files"][0]["diff"].startswith("diff --git")
+
 def test_runtime_recovery_restore_requires_api_key(monkeypatch):
     snapshots = iter([
         {"ok": True, "changed_files": [], "raw": "", "error": ""},

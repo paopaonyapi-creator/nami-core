@@ -9,6 +9,7 @@ Current branch has completed the Runtime API v2, MCP foundation, and narrow Phas
 - `e6afa81 Add Codex handoff notes`
 - `379ff85 Wire dashboard recovery preview endpoint`
 - Add authenticated runtime recovery restore
+- Add runtime recovery diff preview
 
 Completed:
 
@@ -31,6 +32,7 @@ Completed:
 - `/runtime/jobs/{job_id}/recovery/preview` exposes recovery metadata as a read-only API response with `restore_supported` enabled when candidate files exist.
 - TypeScript SDK exposes `runtimeRecoveryPreview(jobId)` for dashboard and future clients.
 - Authenticated recovery restore is available through `POST /runtime/jobs/{job_id}/recovery/restore`, emits runtime recovery events, records audit entries, and is exposed in the dashboard and TypeScript SDK.
+- Read-only recovery diff preview is available through `GET /runtime/jobs/{job_id}/recovery/diff`, surfaced in the dashboard before restore, and exposed in the TypeScript SDK.
 
 Verified locally:
 
@@ -42,7 +44,7 @@ Verified locally:
 Next recommended work:
 
 - Phase 6 is complete in the current narrow scope.
-- Future work can add dashboard diff previews and environment-specific diagnostics policies.
+- Future work can add environment-specific diagnostics policies.
 
 Suggested prompt for Codex on VPS:
 

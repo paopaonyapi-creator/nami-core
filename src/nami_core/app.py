@@ -26,6 +26,7 @@ from nami_core.runtime_v2 import (
     ToolRegistry,
     build_mutating_tool_diagnostics,
     capture_git_worktree_snapshot,
+    recovery_git_diff_preview,
     restore_git_worktree_files,
     run_runtime_diagnostics,
 )
@@ -521,6 +522,19 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             "suggested_commands": recovery.get("suggested_commands") or [],
             "restore_supported": bool(candidate_files),
         }
+
+    @app.get("/runtime/jobs/{job_id}/recovery/diff")
+    async def runtime_job_recovery_diff(job_id: str):
+        Metrics.request_count += 1
+        job = app.state.runtime_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
+        diagnostics = (job.result or {}).get("diagnostics") or {}
+        recovery = diagnostics.get("recovery") or {}
+        candidate_files = recovery.get("candidate_files") or []
+        if not candidate_files:
+            raise HTTPException(status_code=409, detail="no recovery candidate files")
+        return {"job_id": job.id, "requested_action": job.requested_action, **recovery_git_diff_preview(candidate_files)}
 
     @app.post("/runtime/jobs/{job_id}/recovery/restore")
     async def runtime_job_recovery_restore(job_id: str, authorization: str = Header(default="")):

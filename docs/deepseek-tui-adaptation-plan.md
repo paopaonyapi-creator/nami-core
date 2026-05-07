@@ -309,11 +309,12 @@ Completed narrow Runtime API v2 foundation on 2026-05-06:
 - Added dashboard recovery preview for mutation diagnostics, surfacing candidate files and safe inspection commands without automatic restore.
 - Wired the dashboard recovery preview to the read-only recovery preview endpoint and exposed the endpoint through the TypeScript SDK.
 - Added authenticated recovery restore workflow for runtime jobs, including candidate-file safety gates, audit/event records, SDK support, and dashboard restore controls.
+- Added read-only recovery diff preview for candidate files before restore, with dashboard and TypeScript SDK support.
 - Added `/runtime/jobs/{job_id}/recovery/preview` to expose recovery metadata through a read-only Runtime API endpoint.
 
 Remaining next work:
 
-- Phase 6 now includes authenticated one-click restore for candidate files. Future work can add dashboard diff previews and environment-specific diagnostics policies.
+- Phase 6 now includes authenticated one-click restore for candidate files. Future work can add environment-specific diagnostics policies.
 
 ## Notes
 

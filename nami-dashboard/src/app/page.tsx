@@ -29,6 +29,8 @@ interface RuntimeTool { name: string; description: string; permission_level: str
 interface RuntimeRecovery { manual_review_required?: boolean; candidate_files?: string[]; new_candidate_files?: string[]; suggested_commands?: string[] }
 interface RuntimeRecoveryPreview { job_id: string; requested_action: string; manual_review_required: boolean; candidate_files: string[]; new_candidate_files: string[]; suggested_commands: string[]; restore_supported: boolean }
 interface RuntimeRecoveryRestore { ok: boolean; job_id: string; restored_files: string[]; errors: Record<string, unknown>[] }
+interface RuntimeRecoveryDiffFile { path: string; ok: boolean; diff: string; error: string }
+interface RuntimeRecoveryDiff { ok: boolean; job_id: string; requested_action: string; files: RuntimeRecoveryDiffFile[] }
 interface RuntimeDiagnostics { ok?: boolean; changed_files?: string[]; new_changed_files?: string[]; resolved_files?: string[]; before_count?: number; after_count?: number; recovery?: RuntimeRecovery }
 interface RuntimeJobResult { diagnostics?: RuntimeDiagnostics; snapshot?: { before?: Record<string, unknown>; after?: Record<string, unknown> }; [key: string]: unknown }
 interface RuntimeJob { id: string; status: string; requested_action: string; updated_at: string; result?: RuntimeJobResult | null; error?: string | null; audit_entries?: Record<string, unknown>[] }
@@ -526,6 +528,7 @@ function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { 
   const [selectedJobId, setSelectedJobId] = useState("");
   const [recoveryPreview, setRecoveryPreview] = useState<RuntimeRecoveryPreview | null>(null);
   const [restoreResult, setRestoreResult] = useState<RuntimeRecoveryRestore | null>(null);
+  const [recoveryDiff, setRecoveryDiff] = useState<RuntimeRecoveryDiff | null>(null);
   const activeTool = runtimeTools.find(tool => tool.name === selectedTool) || null;
   const activeIsMcp = activeTool?.worker === "mcp";
   const needsApproval = activeTool?.permission_level === "mutating";
@@ -538,13 +541,24 @@ function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { 
     if (!selectedJob?.id || !selectedJob.result?.diagnostics) {
       setRecoveryPreview(null);
       setRestoreResult(null);
+      setRecoveryDiff(null);
       return;
     }
     let active = true;
     setRestoreResult(null);
+    setRecoveryDiff(null);
     fetch(`${API_BASE}/runtime/jobs/${encodeURIComponent(selectedJob.id)}/recovery/preview`)
       .then(response => response.ok ? response.json() : null)
-      .then((data: RuntimeRecoveryPreview | null) => { if (active) setRecoveryPreview(data); })
+      .then((data: RuntimeRecoveryPreview | null) => {
+        if (!active) return;
+        setRecoveryPreview(data);
+        if (data?.restore_supported) {
+          fetch(`${API_BASE}/runtime/jobs/${encodeURIComponent(selectedJob.id)}/recovery/diff`)
+            .then(response => response.ok ? response.json() : null)
+            .then((diff: RuntimeRecoveryDiff | null) => { if (active) setRecoveryDiff(diff); })
+            .catch(() => { if (active) setRecoveryDiff(null); });
+        }
+      })
       .catch(() => { if (active) setRecoveryPreview(null); });
     return () => { active = false; };
   }, [selectedJob?.id, selectedJob?.result?.diagnostics]);
@@ -693,6 +707,7 @@ function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { 
                 <div className="runtime-recovery-preview">
                   {selectedRecovery.files.length > 0 && <div className="truncate">Review: {selectedRecovery.files.join(", ")}</div>}
                   {selectedRecovery.commands.length > 0 && <code>{selectedRecovery.commands.join(" | ")}</code>}
+                  {(recoveryDiff?.files || []).map(file => <pre key={file.path} className="pre-dark">{file.diff || file.error || `No diff for ${file.path}`}</pre>)}
                   {selectedRecovery.restoreSupported && <button type="button" onClick={restoreSelectedJob} disabled={loading || !apiKey} className="btn-gold-dim">Restore files</button>}
                   {selectedRecovery.restoreSupported && !apiKey && <div className="text-xs text-orange-400">API key required to restore files.</div>}
                   {(restoreResult?.restored_files || []).length > 0 && <div className="truncate text-green-400">Restored: {restoreResult?.restored_files.join(", ")}</div>}
