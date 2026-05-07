@@ -37,3 +37,22 @@ def test_jsonl_sensor_records_stable_schema_fields(tmp_path) -> None:
     assert record["action"] == "summarize"
     assert record["correlation_id"] == "trace-1"
     assert record["metadata"] == {"safe": True}
+
+
+def test_jsonl_sensor_swallows_oserror(tmp_path, caplog):
+    """Sensor writes must never crash the dispatch path on permission errors."""
+    import logging
+    from nami_harness.sensors import JsonlSensor, _warned_paths
+
+    bad = tmp_path / "blocker"
+    bad.write_text("not a directory")
+    sensor = JsonlSensor(bad / "events.jsonl")
+
+    _warned_paths.clear()
+    with caplog.at_level(logging.WARNING, logger="nami_harness.sensors"):
+        event = sensor.record("test", {"a": 1})
+        sensor.record("test", {"a": 2})
+
+    assert event.event_type == "test"
+    assert sum(1 for r in caplog.records if "sensor write failed" in r.message) == 1
+

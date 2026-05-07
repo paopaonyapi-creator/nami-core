@@ -1,9 +1,13 @@
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 import json
+import logging
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+_log = logging.getLogger(__name__)
+_warned_paths: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -44,8 +48,18 @@ class JsonlSensor:
             correlation_id=correlation_id,
             metadata=metadata or {},
         )
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as file:
-            file.write(json.dumps(asdict(event), ensure_ascii=False, sort_keys=True))
-            file.write("\n")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as file:
+                file.write(json.dumps(asdict(event), ensure_ascii=False, sort_keys=True))
+                file.write("\n")
+        except OSError as exc:
+            key = str(self.path)
+            if key not in _warned_paths:
+                _warned_paths.add(key)
+                _log.warning(
+                    "sensor write failed for %s: %s (further failures suppressed)",
+                    self.path,
+                    exc,
+                )
         return event
