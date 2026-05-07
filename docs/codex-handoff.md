@@ -28,7 +28,7 @@ Completed:
 
 Verified locally:
 
-- `python -m pytest -q tests\test_runtime_api_v2.py tests\test_mcp_config.py tests\test_scheduler_api.py` -> `43 passed`
+- `python -m pytest -q tests\test_runtime_api_v2.py tests\test_mcp_config.py tests\test_scheduler_api.py` -> `44 passed`
 - `python -m py_compile src\nami_core\app.py src\nami_core\mcp_client.py src\nami_core\mcp_config.py src\nami_core\runtime_v2.py`
 - `npm run build` in `nami-dashboard`
 - `git diff --check`
