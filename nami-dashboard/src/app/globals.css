@@ -293,6 +293,23 @@ body {
   line-height: 1.25;
 }
 
+.runtime-recovery-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+  color: var(--text-dim);
+  font-size: 0.6875rem;
+}
+
+.runtime-recovery-preview code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--gold);
+}
+
 .runtime-event-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 7rem);

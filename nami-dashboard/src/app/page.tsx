@@ -26,7 +26,8 @@ interface SSEEvent { event: string; data: Record<string, unknown> }
 interface RateLimitInfo { worker: string; max_requests: number; window_seconds: number; active: boolean; current_hits: number }
 interface RuntimeHealth { status: string; service: string; tools: number; jobs: number; timestamp: string }
 interface RuntimeTool { name: string; description: string; permission_level: string; timeout_seconds: number; audit_category: string; read_only: boolean; worker: string | null; action: string | null }
-interface RuntimeDiagnostics { ok?: boolean; changed_files?: string[]; new_changed_files?: string[]; resolved_files?: string[]; before_count?: number; after_count?: number }
+interface RuntimeRecovery { manual_review_required?: boolean; candidate_files?: string[]; new_candidate_files?: string[]; suggested_commands?: string[] }
+interface RuntimeDiagnostics { ok?: boolean; changed_files?: string[]; new_changed_files?: string[]; resolved_files?: string[]; before_count?: number; after_count?: number; recovery?: RuntimeRecovery }
 interface RuntimeJobResult { diagnostics?: RuntimeDiagnostics; snapshot?: { before?: Record<string, unknown>; after?: Record<string, unknown> }; [key: string]: unknown }
 interface RuntimeJob { id: string; status: string; requested_action: string; updated_at: string; result?: RuntimeJobResult | null; error?: string | null; audit_entries?: Record<string, unknown>[] }
 interface RuntimeStreamEvent { type: string; timestamp: string; job_id?: string | null; data?: Record<string, unknown> }
@@ -500,6 +501,13 @@ function runtimeSnapshotRaw(snapshot: Record<string, unknown> | undefined): stri
   return typeof raw === "string" && raw.trim() ? raw : "No git status output";
 }
 
+function runtimeRecoveryPreview(recovery: RuntimeRecovery | undefined): { files: string[]; commands: string[] } {
+  return {
+    files: recovery?.candidate_files || [],
+    commands: recovery?.suggested_commands || [],
+  };
+}
+
 function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { health: RuntimeHealth | null; tools: RuntimeTool[]; jobs: RuntimeJob[]; mcpServers: RuntimeMcpToolServer[]; apiKey: string; onRefresh: () => void }) {
   const readOnly = tools.filter(tool => tool.read_only).length;
   const latestJobs = jobs.slice(0, 5);
@@ -519,6 +527,7 @@ function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { 
   const denied = activeTool?.permission_level === "dangerous" || activeTool?.permission_level === "admin_only";
   const selectedJob = jobs.find(job => job.id === selectedJobId) || latestJobs.find(job => job.result?.diagnostics) || latestJobs[0] || null;
   const selectedDiagnostics = selectedJob ? runtimeDiagnosticsSummary(selectedJob) : null;
+  const selectedRecovery = runtimeRecoveryPreview(selectedJob?.result?.diagnostics?.recovery);
 
   useEffect(() => {
     const es = new EventSource(`${API_BASE}/runtime/events`);
@@ -642,6 +651,12 @@ function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { 
                 <pre>{runtimeSnapshotRaw(selectedJob.result.snapshot?.before)}</pre>
                 <pre>{runtimeSnapshotRaw(selectedJob.result.snapshot?.after)}</pre>
               </div>
+              {(selectedRecovery.files.length > 0 || selectedRecovery.commands.length > 0) && (
+                <div className="runtime-recovery-preview">
+                  {selectedRecovery.files.length > 0 && <div className="truncate">Review: {selectedRecovery.files.join(", ")}</div>}
+                  {selectedRecovery.commands.length > 0 && <code>{selectedRecovery.commands.join(" | ")}</code>}
+                </div>
+              )}
             </div>
           )}
           <div className="mt-3">

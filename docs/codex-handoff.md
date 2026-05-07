@@ -25,6 +25,7 @@ Completed:
 - Diagnostics runner selection is explicit through `NAMI_RUNTIME_DIAGNOSTIC_CHECKS` with unknown checks ignored and `none` disabling runners.
 - Deployment docs describe runtime diagnostics check selection for VPS/runtime operations.
 - Mutation diagnostics include recovery metadata for manual review, candidate files, and safe inspection commands.
+- Dashboard Runtime API v2 detail view shows recovery preview metadata without automatic restore.
 
 Verified locally:
 

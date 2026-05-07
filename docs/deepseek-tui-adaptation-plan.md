@@ -306,6 +306,7 @@ Completed narrow Runtime API v2 foundation on 2026-05-06:
 - Added explicit diagnostics selection through `NAMI_RUNTIME_DIAGNOSTIC_CHECKS`, supporting safe configured checks and `none` for disabling automatic runners.
 - Documented deployment configuration for runtime diagnostics check selection.
 - Added recovery metadata to mutation diagnostics, including manual-review flags, candidate files, new files, and safe suggested inspection commands.
+- Added dashboard recovery preview for mutation diagnostics, surfacing candidate files and safe inspection commands without automatic restore.
 
 Remaining next work:
 
