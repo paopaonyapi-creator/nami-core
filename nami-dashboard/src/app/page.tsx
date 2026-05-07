@@ -26,7 +26,9 @@ interface SSEEvent { event: string; data: Record<string, unknown> }
 interface RateLimitInfo { worker: string; max_requests: number; window_seconds: number; active: boolean; current_hits: number }
 interface RuntimeHealth { status: string; service: string; tools: number; jobs: number; timestamp: string }
 interface RuntimeTool { name: string; description: string; permission_level: string; timeout_seconds: number; audit_category: string; read_only: boolean; worker: string | null; action: string | null }
-interface RuntimeJob { id: string; status: string; requested_action: string; updated_at: string; error?: string | null }
+interface RuntimeDiagnostics { ok?: boolean; changed_files?: string[]; new_changed_files?: string[]; resolved_files?: string[]; before_count?: number; after_count?: number }
+interface RuntimeJobResult { diagnostics?: RuntimeDiagnostics; snapshot?: { before?: Record<string, unknown>; after?: Record<string, unknown> }; [key: string]: unknown }
+interface RuntimeJob { id: string; status: string; requested_action: string; updated_at: string; result?: RuntimeJobResult | null; error?: string | null; audit_entries?: Record<string, unknown>[] }
 interface RuntimeStreamEvent { type: string; timestamp: string; job_id?: string | null; data?: Record<string, unknown> }
 interface RuntimeMcpServer { name: string; transport: string; command?: string | null; args: string[]; url?: string | null; enabled: boolean; tool_namespace: string; permission_level: string; status: string; status_detail: string }
 interface RuntimeMcpToolServer { server: string; tool_namespace: string; enabled: boolean; status: string; status_detail: string; last_checked_at?: string | null; failure_count?: number; next_retry_at?: string | null; tools: RuntimeTool[]; tool_count: number }
@@ -480,6 +482,19 @@ function QuickActionsPanel({ apiKey }: { apiKey: string }) {
     </div>
   );
 }
+function runtimeDiagnosticsSummary(job: RuntimeJob): { label: string; files: string[]; title: string } | null {
+  const diagnostics = job.result?.diagnostics;
+  if (!diagnostics) return null;
+  const changed = diagnostics.changed_files || [];
+  const fresh = diagnostics.new_changed_files || [];
+  const resolved = diagnostics.resolved_files || [];
+  return {
+    label: `${diagnostics.after_count ?? changed.length} changed / ${fresh.length} new`,
+    files: fresh.length ? fresh : changed,
+    title: [`changed: ${changed.length}`, `new: ${fresh.length}`, `resolved: ${resolved.length}`].join(" | "),
+  };
+}
+
 function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { health: RuntimeHealth | null; tools: RuntimeTool[]; jobs: RuntimeJob[]; mcpServers: RuntimeMcpToolServer[]; apiKey: string; onRefresh: () => void }) {
   const readOnly = tools.filter(tool => tool.read_only).length;
   const latestJobs = jobs.slice(0, 5);
@@ -595,12 +610,18 @@ function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { 
         <div>
           <div className="flex items-center gap-2 text-xs text-gold-dim mb-2"><Briefcase size={13} /> Recent jobs</div>
           <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
-            {latestJobs.map(job => (
-              <div key={job.id} className="runtime-row">
-                <span className="truncate">{job.requested_action}</span>
-                <span className={job.status === "completed" ? "text-green-400" : job.status === "failed" ? "text-red-400" : "text-orange-400"}>{job.status}</span>
-              </div>
-            ))}
+            {latestJobs.map(job => {
+              const diagnostics = runtimeDiagnosticsSummary(job);
+              return (
+                <div key={job.id} className="runtime-row runtime-job-row" title={diagnostics?.title || job.error || job.id}>
+                  <div className="min-w-0">
+                    <div className="truncate">{job.requested_action}</div>
+                    {diagnostics && <div className="runtime-job-diagnostics truncate">{diagnostics.label}{diagnostics.files[0] ? ` · ${diagnostics.files[0]}` : ""}</div>}
+                  </div>
+                  <span className={job.status === "completed" ? "text-green-400" : job.status === "failed" ? "text-red-400" : "text-orange-400"}>{job.status}</span>
+                </div>
+              );
+            })}
             {latestJobs.length === 0 && <div className="text-xs text-dim">No runtime jobs yet</div>}
           </div>
           <div className="mt-3">

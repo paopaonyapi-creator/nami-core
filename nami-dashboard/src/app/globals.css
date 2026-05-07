@@ -255,6 +255,17 @@ body {
   background: rgba(212, 175, 55, 0.1);
 }
 
+.runtime-job-row {
+  min-height: 3rem;
+}
+
+.runtime-job-diagnostics {
+  margin-top: 0.125rem;
+  color: var(--text-dim);
+  font-size: 0.6875rem;
+  line-height: 1.1;
+}
+
 .runtime-event-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 7rem);
