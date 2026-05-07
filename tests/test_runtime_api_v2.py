@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
+import nami_core.app as app_module
 from nami_core.app import create_app
 from nami_core.hermes import Hermes
 from nami_core.runtime_v2 import RuntimeEvent, RuntimeJobStore, ToolRegistry
@@ -150,7 +151,13 @@ def test_runtime_tool_invoke_denies_dangerous_action():
     assert response.json()["detail"] == "tool denied by policy"
 
 
-def test_runtime_tool_invoke_runs_mutating_action_after_approval():
+def test_runtime_tool_invoke_runs_mutating_action_after_approval(monkeypatch):
+    snapshots = iter([
+        {"ok": True, "changed_files": [], "raw": "", "error": ""},
+        {"ok": True, "changed_files": ["src/nami_core/app.py"], "raw": " M src/nami_core/app.py", "error": ""},
+    ])
+    monkeypatch.setattr(app_module, "capture_git_worktree_snapshot", lambda: next(snapshots))
+
     client = _client_with_actions({"send"})
     response = client.post(
         "/runtime/tools/invoke",
@@ -162,6 +169,10 @@ def test_runtime_tool_invoke_runs_mutating_action_after_approval():
     assert data["ok"] is True
     assert data["job"]["status"] == "completed"
     assert data["job"]["requested_action"] == "status.send"
+    assert data["job"]["result"]["snapshot"]["before"]["changed_files"] == []
+    assert data["job"]["result"]["snapshot"]["after"]["changed_files"] == ["src/nami_core/app.py"]
+    assert data["job"]["result"]["diagnostics"]["new_changed_files"] == ["src/nami_core/app.py"]
+    assert data["job"]["audit_entries"][1]["diagnostics"]["after_count"] == 1
 
 def test_runtime_mcp_servers_lists_configured_servers(tmp_path, monkeypatch):
     config_file = tmp_path / "mcp.yaml"

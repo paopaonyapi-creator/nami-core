@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
+import subprocess
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -54,6 +55,46 @@ def classify_tool_action(worker: str, action: str) -> tuple[PolicyCategory, bool
     if action_key in _READ_ONLY_ACTIONS or action_key.startswith(("get_", "list_", "fetch_", "read_", "search_")):
         return "read_only", True
     return "protected_read", True
+
+
+def capture_git_worktree_snapshot(cwd: str | None = None) -> dict[str, Any]:
+    try:
+        completed = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "changed_files": [], "raw": ""}
+    raw = completed.stdout.strip()
+    changed_files = []
+    for line in raw.splitlines():
+        path = line[3:].strip() if len(line) > 3 else line.strip()
+        if path:
+            changed_files.append(path)
+    return {
+        "ok": completed.returncode == 0,
+        "returncode": completed.returncode,
+        "changed_files": changed_files,
+        "raw": raw,
+        "error": completed.stderr.strip(),
+    }
+
+
+def build_mutating_tool_diagnostics(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    before_files = set(before.get("changed_files") or [])
+    after_files = set(after.get("changed_files") or [])
+    return {
+        "ok": bool(before.get("ok")) and bool(after.get("ok")),
+        "changed_files": sorted(after_files),
+        "new_changed_files": sorted(after_files - before_files),
+        "resolved_files": sorted(before_files - after_files),
+        "before_count": len(before_files),
+        "after_count": len(after_files),
+    }
 
 
 def utc_now() -> str:

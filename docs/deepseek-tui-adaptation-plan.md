@@ -299,10 +299,12 @@ Completed narrow Runtime API v2 foundation on 2026-05-06:
 - Added dashboard MCP lifecycle controls for reconnecting enabled servers and surfacing failure/retry status.
 - Exposed discovered MCP tools through `/runtime/tools` so worker and MCP tools share one runtime registry surface.
 - Added regression coverage for Runtime API v2, MCP config loading, MCP `stdio`, `sse`, and `websocket` discovery/invocation, protected MCP tool policy enforcement, MCP reconnect/health reporting, and central MCP tool listing.
+- Added narrow Phase 6 rollback snapshots and diagnostics for approved mutating worker tool invokes, capturing pre/post git worktree status and attaching changed-file diagnostics to runtime job results and audit entries.
 
 Remaining next work:
 
-- Continue Phase 6 rollback snapshots and diagnostics when mutating tool execution needs recovery support.
+- Extend Phase 6 dashboard support with diff/result views for snapshot and diagnostic details.
+- Add deeper diagnostics runners for configured Python and dashboard projects.
 
 ## Notes
 

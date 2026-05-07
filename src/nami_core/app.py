@@ -19,7 +19,14 @@ from pydantic import BaseModel
 
 from nami_core.mcp_client import McpClientError, McpClientManager
 from nami_core.mcp_config import McpConfig, load_mcp_config
-from nami_core.runtime_v2 import ExecutionPolicy, RuntimeEvent, RuntimeJobStore, ToolRegistry
+from nami_core.runtime_v2 import (
+    ExecutionPolicy,
+    RuntimeEvent,
+    RuntimeJobStore,
+    ToolRegistry,
+    build_mutating_tool_diagnostics,
+    capture_git_worktree_snapshot,
+)
 
 logger = logging.getLogger("nami_core.app")
 
@@ -431,17 +438,26 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         app.state.runtime_jobs.save(job)
         record_runtime_event(started)
         try:
+            snapshot_before = capture_git_worktree_snapshot() if tool.permission_level == "mutating" else None
             t0 = time.monotonic()
             result = app.state.hermes.dispatch(req.worker, req.action, req.payload)
             latency = (time.monotonic() - t0) * 1000
+            snapshot_after = capture_git_worktree_snapshot() if snapshot_before is not None else None
+            diagnostics = build_mutating_tool_diagnostics(snapshot_before, snapshot_after) if snapshot_before is not None and snapshot_after is not None else None
             Metrics.record_dispatch(latency)
             _audit_log(req.worker, req.action, request.client.host if request.client else "-", True, latency)
             job.status = "completed"
             job.updated_at = datetime.now(timezone.utc).isoformat()
             job.result = {"ok": True, "output": result.output, "latency_ms": round(latency, 1)}
+            if snapshot_before is not None and snapshot_after is not None and diagnostics is not None:
+                job.result["snapshot"] = {"before": snapshot_before, "after": snapshot_after}
+                job.result["diagnostics"] = diagnostics
             completed = RuntimeEvent(type="job.completed", job_id=job.id, data=job.result)
             job.progress_events.append(RuntimeEvent(type="tool.completed", job_id=job.id, data=job.result))
-            job.audit_entries.append({"event": "tool.completed", "worker": req.worker, "action": req.action, "ok": True, "latency_ms": round(latency, 1), "timestamp": completed.timestamp})
+            completed_audit = {"event": "tool.completed", "worker": req.worker, "action": req.action, "ok": True, "latency_ms": round(latency, 1), "timestamp": completed.timestamp}
+            if diagnostics is not None:
+                completed_audit["diagnostics"] = diagnostics
+            job.audit_entries.append(completed_audit)
             app.state.runtime_jobs.save(job)
             record_runtime_event(completed)
             await ws_manager.broadcast("runtime.event", completed.to_dict())
