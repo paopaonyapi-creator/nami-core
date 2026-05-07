@@ -181,6 +181,11 @@ def build_core(config_dir: str | None = None) -> tuple:
     from nami_workers.sentiment_worker import sentiment_worker
     from nami_workers.search_worker import search_worker
     from nami_workers.image_worker import image_worker
+    from nami_workers.clipboardbypao_worker import clipboardbypao_worker
+    from nami_workers.hanoi_stats_worker import hanoi_stats_worker
+    from nami_workers.laopatana_lab_worker import laopatana_lab_worker
+    from nami_workers.miroshark_oracle_worker import miroshark_oracle_worker
+    from nami_workers.open_design_worker import open_design_worker
 
     registry.register("lottery", lottery_worker)
     registry.register("signal", signal_worker)
@@ -203,6 +208,11 @@ def build_core(config_dir: str | None = None) -> tuple:
     registry.register("sentiment", sentiment_worker)
     registry.register("search", search_worker)
     registry.register("image", image_worker)
+    registry.register("clipboardbypao", clipboardbypao_worker)
+    registry.register("hanoi_stats", hanoi_stats_worker)
+    registry.register("laopatana_lab", laopatana_lab_worker)
+    registry.register("miroshark_oracle", miroshark_oracle_worker)
+    registry.register("open_design", open_design_worker)
 
     registry.load_from_directory(cdir)
     registry.wire_into_hermes(hermes)
