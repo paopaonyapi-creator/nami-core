@@ -85,6 +85,30 @@ def capture_git_worktree_snapshot(cwd: str | None = None) -> dict[str, Any]:
     }
 
 
+def restore_git_worktree_files(paths: list[str], cwd: str | None = None) -> dict[str, Any]:
+    root = Path(cwd or ".").resolve()
+    restored = []
+    errors = []
+    for path in paths:
+        candidate = (root / path).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            errors.append({"path": path, "error": "path outside repository"})
+            continue
+        path_errors = []
+        for command in (["git", "checkout", "--", path], ["git", "clean", "-f", "--", path]):
+            completed = subprocess.run(command, cwd=str(root), check=False, capture_output=True, text=True, timeout=10)
+            if completed.returncode == 0:
+                restored.append(path)
+                path_errors = []
+                break
+            path_errors.append({"command": command, "error": completed.stderr.strip() or completed.stdout.strip()})
+        for error in path_errors:
+            errors.append({"path": path, **error})
+    return {"ok": not errors, "restored_files": restored, "errors": errors}
+
+
 _DIAGNOSTIC_COMMANDS = {
     "runtime_pytest": ("tests/test_runtime_api_v2.py", ["python", "-m", "pytest", "-q", "tests/test_runtime_api_v2.py"], "."),
     "dashboard_build": ("nami-dashboard/package.json", ["npm", "run", "build"], "nami-dashboard"),

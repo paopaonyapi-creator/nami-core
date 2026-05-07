@@ -186,10 +186,59 @@ def test_runtime_tool_invoke_runs_mutating_action_after_approval(monkeypatch):
     preview = client.get(f"/runtime/jobs/{data['job']['id']}/recovery/preview")
     assert preview.status_code == 200
     preview_data = preview.json()
-    assert preview_data["restore_supported"] is False
+    assert preview_data["restore_supported"] is True
     assert preview_data["candidate_files"] == ["src/nami_core/app.py"]
     assert preview_data["suggested_commands"] == ["git status --short", "git diff --stat", "git diff -- <path>"]
     assert data["job"]["audit_entries"][1]["diagnostics"]["after_count"] == 1
+
+
+def test_runtime_recovery_restore_requires_api_key(monkeypatch):
+    snapshots = iter([
+        {"ok": True, "changed_files": [], "raw": "", "error": ""},
+        {"ok": True, "changed_files": ["src/nami_core/app.py"], "raw": " M src/nami_core/app.py", "error": ""},
+    ])
+    monkeypatch.setattr(app_module, "capture_git_worktree_snapshot", lambda: next(snapshots))
+    monkeypatch.setattr(app_module, "run_runtime_diagnostics", lambda: [])
+
+    client = _client_with_actions({"send"})
+    response = client.post(
+        "/runtime/tools/invoke",
+        headers={"Authorization": "Bearer test-key"},
+        json={"worker": "status", "action": "send", "payload": {}, "approved": True},
+    )
+    job_id = response.json()["job"]["id"]
+
+    restore = client.post(f"/runtime/jobs/{job_id}/recovery/restore")
+    assert restore.status_code == 401
+    assert restore.json()["detail"] == "api key required"
+
+
+def test_runtime_recovery_restore_restores_candidate_files(monkeypatch):
+    snapshots = iter([
+        {"ok": True, "changed_files": [], "raw": "", "error": ""},
+        {"ok": True, "changed_files": ["src/nami_core/app.py"], "raw": " M src/nami_core/app.py", "error": ""},
+    ])
+    monkeypatch.setattr(app_module, "capture_git_worktree_snapshot", lambda: next(snapshots))
+    monkeypatch.setattr(app_module, "run_runtime_diagnostics", lambda: [])
+    monkeypatch.setattr(app_module, "restore_git_worktree_files", lambda paths: {"ok": True, "restored_files": paths, "errors": []})
+
+    client = _client_with_actions({"send"})
+    response = client.post(
+        "/runtime/tools/invoke",
+        headers={"Authorization": "Bearer test-key"},
+        json={"worker": "status", "action": "send", "payload": {}, "approved": True},
+    )
+    job_id = response.json()["job"]["id"]
+
+    restore = client.post(f"/runtime/jobs/{job_id}/recovery/restore", headers={"Authorization": "Bearer test-key"})
+    assert restore.status_code == 200
+    restore_data = restore.json()
+    assert restore_data["ok"] is True
+    assert restore_data["restored_files"] == ["src/nami_core/app.py"]
+
+    detail = client.get(f"/runtime/jobs/{job_id}").json()
+    assert detail["audit_entries"][-1]["event"] == "job.recovery_restored"
+    assert detail["progress_events"][-1]["type"] == "job.recovery_restored"
 
 def test_runtime_mcp_servers_lists_configured_servers(tmp_path, monkeypatch):
     config_file = tmp_path / "mcp.yaml"

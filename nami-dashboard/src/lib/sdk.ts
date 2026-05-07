@@ -22,6 +22,7 @@ export interface RuntimeJobsResponse { jobs: RuntimeJob[] }
 export interface RuntimeToolInvokeResponse { ok: boolean; job: RuntimeJob; output?: Record<string, unknown>; latency_ms?: number }
 export interface RuntimeToolInvokeRequest { worker: string; action: string; payload?: Record<string, unknown>; approved?: boolean }
 export interface RuntimeRecoveryPreviewResponse { job_id: string; requested_action: string; manual_review_required: boolean; candidate_files: string[]; new_candidate_files: string[]; suggested_commands: string[]; restore_supported: boolean }
+export interface RuntimeRecoveryRestoreResponse { ok: boolean; job_id: string; restored_files: string[]; errors: Record<string, unknown>[] }
 export interface RuntimeMcpServer { name: string; transport: string; command?: string | null; args: string[]; url?: string | null; env: Record<string, string>; enabled: boolean; tool_prefix?: string | null; tool_namespace: string; permission_level: string; status: string; status_detail: string }
 export interface RuntimeMcpServersResponse { servers: RuntimeMcpServer[]; enabled: string[]; count: number; enabled_count: number }
 export interface RuntimeMcpToolServer { server: string; tool_namespace: string; enabled: boolean; status: string; status_detail: string; tools: RuntimeTool[]; tool_count: number }
@@ -59,6 +60,7 @@ export class NamiClient {
   async runtimeMcpTools(): Promise<RuntimeMcpToolsResponse> { return this.fetchJson<RuntimeMcpToolsResponse>("/runtime/mcp/tools"); }
   async runtimeJob(jobId: string): Promise<RuntimeJob> { return this.fetchJson<RuntimeJob>(`/runtime/jobs/${encodeURIComponent(jobId)}`); }
   async runtimeRecoveryPreview(jobId: string): Promise<RuntimeRecoveryPreviewResponse> { return this.fetchJson<RuntimeRecoveryPreviewResponse>(`/runtime/jobs/${encodeURIComponent(jobId)}/recovery/preview`); }
+  async runtimeRecoveryRestore(jobId: string): Promise<RuntimeRecoveryRestoreResponse> { return this.fetchJson<RuntimeRecoveryRestoreResponse>(`/runtime/jobs/${encodeURIComponent(jobId)}/recovery/restore`, { method: "POST" }); }
   async runtimeToolInvoke(request: RuntimeToolInvokeRequest): Promise<RuntimeToolInvokeResponse> {
     return this.fetchJson<RuntimeToolInvokeResponse>("/runtime/tools/invoke", {
       method: "POST",

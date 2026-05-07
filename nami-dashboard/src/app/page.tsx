@@ -28,6 +28,7 @@ interface RuntimeHealth { status: string; service: string; tools: number; jobs: 
 interface RuntimeTool { name: string; description: string; permission_level: string; timeout_seconds: number; audit_category: string; read_only: boolean; worker: string | null; action: string | null }
 interface RuntimeRecovery { manual_review_required?: boolean; candidate_files?: string[]; new_candidate_files?: string[]; suggested_commands?: string[] }
 interface RuntimeRecoveryPreview { job_id: string; requested_action: string; manual_review_required: boolean; candidate_files: string[]; new_candidate_files: string[]; suggested_commands: string[]; restore_supported: boolean }
+interface RuntimeRecoveryRestore { ok: boolean; job_id: string; restored_files: string[]; errors: Record<string, unknown>[] }
 interface RuntimeDiagnostics { ok?: boolean; changed_files?: string[]; new_changed_files?: string[]; resolved_files?: string[]; before_count?: number; after_count?: number; recovery?: RuntimeRecovery }
 interface RuntimeJobResult { diagnostics?: RuntimeDiagnostics; snapshot?: { before?: Record<string, unknown>; after?: Record<string, unknown> }; [key: string]: unknown }
 interface RuntimeJob { id: string; status: string; requested_action: string; updated_at: string; result?: RuntimeJobResult | null; error?: string | null; audit_entries?: Record<string, unknown>[] }
@@ -502,10 +503,11 @@ function runtimeSnapshotRaw(snapshot: Record<string, unknown> | undefined): stri
   return typeof raw === "string" && raw.trim() ? raw : "No git status output";
 }
 
-function runtimeRecoveryPreview(recovery: RuntimeRecovery | RuntimeRecoveryPreview | undefined): { files: string[]; commands: string[] } {
+function runtimeRecoveryPreview(recovery: RuntimeRecovery | RuntimeRecoveryPreview | undefined): { files: string[]; commands: string[]; restoreSupported: boolean } {
   return {
     files: recovery?.candidate_files || [],
     commands: recovery?.suggested_commands || [],
+    restoreSupported: "restore_supported" in (recovery || {}) ? Boolean((recovery as RuntimeRecoveryPreview).restore_supported) : false,
   };
 }
 
@@ -523,6 +525,7 @@ function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { 
   const [runtimeEvents, setRuntimeEvents] = useState<RuntimeStreamEvent[]>([]);
   const [selectedJobId, setSelectedJobId] = useState("");
   const [recoveryPreview, setRecoveryPreview] = useState<RuntimeRecoveryPreview | null>(null);
+  const [restoreResult, setRestoreResult] = useState<RuntimeRecoveryRestore | null>(null);
   const activeTool = runtimeTools.find(tool => tool.name === selectedTool) || null;
   const activeIsMcp = activeTool?.worker === "mcp";
   const needsApproval = activeTool?.permission_level === "mutating";
@@ -534,9 +537,11 @@ function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { 
   useEffect(() => {
     if (!selectedJob?.id || !selectedJob.result?.diagnostics) {
       setRecoveryPreview(null);
+      setRestoreResult(null);
       return;
     }
     let active = true;
+    setRestoreResult(null);
     fetch(`${API_BASE}/runtime/jobs/${encodeURIComponent(selectedJob.id)}/recovery/preview`)
       .then(response => response.ok ? response.json() : null)
       .then((data: RuntimeRecoveryPreview | null) => { if (active) setRecoveryPreview(data); })
@@ -557,6 +562,8 @@ function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { 
     es.addEventListener("tool.started", pushEvent);
     es.addEventListener("job.completed", pushEvent);
     es.addEventListener("job.failed", pushEvent);
+    es.addEventListener("job.recovery_restored", pushEvent);
+    es.addEventListener("job.recovery_failed", pushEvent);
     return () => es.close();
   }, [onRefresh]);
 
@@ -567,6 +574,22 @@ function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { 
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
       const response = await fetch(`${API_BASE}/runtime/mcp/servers/${encodeURIComponent(serverName)}/reconnect`, { method: "POST", headers });
       const data = await response.json().catch(() => ({}));
+      setResult(JSON.stringify(data, null, 2));
+      if (response.ok) onRefresh();
+    } catch (e) {
+      setResult(`Error: ${e}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const restoreSelectedJob = async () => {
+    if (!selectedJob?.id || !selectedRecovery.restoreSupported || !apiKey) return;
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/runtime/jobs/${encodeURIComponent(selectedJob.id)}/recovery/restore`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}` } });
+      const data = await response.json().catch(() => ({}));
+      setRestoreResult(data as RuntimeRecoveryRestore);
       setResult(JSON.stringify(data, null, 2));
       if (response.ok) onRefresh();
     } catch (e) {
@@ -670,6 +693,9 @@ function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { 
                 <div className="runtime-recovery-preview">
                   {selectedRecovery.files.length > 0 && <div className="truncate">Review: {selectedRecovery.files.join(", ")}</div>}
                   {selectedRecovery.commands.length > 0 && <code>{selectedRecovery.commands.join(" | ")}</code>}
+                  {selectedRecovery.restoreSupported && <button type="button" onClick={restoreSelectedJob} disabled={loading || !apiKey} className="btn-gold-dim">Restore files</button>}
+                  {selectedRecovery.restoreSupported && !apiKey && <div className="text-xs text-orange-400">API key required to restore files.</div>}
+                  {(restoreResult?.restored_files || []).length > 0 && <div className="truncate text-green-400">Restored: {restoreResult?.restored_files.join(", ")}</div>}
                 </div>
               )}
             </div>

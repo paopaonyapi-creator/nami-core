@@ -26,6 +26,7 @@ from nami_core.runtime_v2 import (
     ToolRegistry,
     build_mutating_tool_diagnostics,
     capture_git_worktree_snapshot,
+    restore_git_worktree_files,
     run_runtime_diagnostics,
 )
 
@@ -510,15 +511,42 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
         diagnostics = (job.result or {}).get("diagnostics") or {}
         recovery = diagnostics.get("recovery") or {}
+        candidate_files = recovery.get("candidate_files") or []
         return {
             "job_id": job.id,
             "requested_action": job.requested_action,
             "manual_review_required": bool(recovery.get("manual_review_required")),
-            "candidate_files": recovery.get("candidate_files") or [],
+            "candidate_files": candidate_files,
             "new_candidate_files": recovery.get("new_candidate_files") or [],
             "suggested_commands": recovery.get("suggested_commands") or [],
-            "restore_supported": False,
+            "restore_supported": bool(candidate_files),
         }
+
+    @app.post("/runtime/jobs/{job_id}/recovery/restore")
+    async def runtime_job_recovery_restore(job_id: str, authorization: str = Header(default="")):
+        Metrics.request_count += 1
+        if not app.state.api_key:
+            raise HTTPException(status_code=403, detail="restore requires api key configuration")
+        key = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+        if not hmac.compare_digest(key, app.state.api_key):
+            raise HTTPException(status_code=401, detail="api key required")
+        job = app.state.runtime_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
+        diagnostics = (job.result or {}).get("diagnostics") or {}
+        recovery = diagnostics.get("recovery") or {}
+        candidate_files = recovery.get("candidate_files") or []
+        if not candidate_files:
+            raise HTTPException(status_code=409, detail="no recovery candidate files")
+        result = restore_git_worktree_files(candidate_files)
+        event = RuntimeEvent(type="job.recovery_restored" if result.get("ok") else "job.recovery_failed", job_id=job.id, data=result)
+        job.progress_events.append(event)
+        job.audit_entries.append({"event": event.type, "worker": "runtime", "action": "recovery.restore", "ok": result.get("ok"), "timestamp": event.timestamp, "result": result})
+        app.state.runtime_jobs.save(job)
+        record_runtime_event(event)
+        if not result.get("ok"):
+            raise HTTPException(status_code=500, detail=result)
+        return {"ok": True, "job_id": job.id, **result}
 
     @app.get("/runtime/events")
     async def runtime_events(request: Request, test: bool = False):
