@@ -27,11 +27,11 @@ fi
 echo "No raw secrets in source."
 
 echo "=== 4. CHANGELOG current ==="
-if ! head -5 CHANGELOG.md | grep -q "0.13.0"; then
-  echo "FAIL: CHANGELOG top entry is not 0.13.0"
+if ! head -5 CHANGELOG.md | grep -q "0.14.0"; then
+  echo "FAIL: CHANGELOG top entry is not 0.14.0"
   exit 1
 fi
-echo "CHANGELOG top entry: 0.13.0"
+echo "CHANGELOG top entry: 0.14.0"
 
 echo "=== 5. Forbidden terms in user-facing copy ==="
 if grep -rni -E '(guarantee|การันตี|แน่นอน|100%)' --include='*.md' --include='*.py' \

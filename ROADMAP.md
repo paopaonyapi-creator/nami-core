@@ -1,14 +1,26 @@
 # Nami Core Roadmap
 
-## Current: v0.13.0 — Dashboard + API Polish (2026-05-06)
+## Current: v0.14.0 — Runtime API v2 + MCP + Rollback (2026-05-07)
 
+- [x] Runtime API v2 (`/runtime/health`, `/tools`, `/jobs`, `/events`)
+- [x] Tool registry with execution policy (read_only / protected_read / mutating / dangerous / admin_only)
+- [x] Persistent runtime jobs (JSON storage via `NAMI_RUNTIME_JOBS_FILE`)
+- [x] MCP client (stdio + sse + websocket) with reconnect + health controls
+- [x] Discovered MCP tools exposed through `/runtime/tools`
+- [x] Phase 6 rollback: pre/post git snapshots + diagnostics + recovery preview/diff/restore
+- [x] Environment-specific diagnostics policies
+- [x] Runtime recovery WebSocket broadcasts
+- [x] Dashboard Runtime API v2 + MCP control panel
+- [x] 258 tests passing
+
+## Done
+
+### v0.13.0 — Dashboard + API Polish
 - [x] Nginx proxy fix for `/events` (SSE), `/workers/`, write endpoints
 - [x] Rate Limits panel in dashboard (per-worker progress bars)
 - [x] Interactive API docs at `/docs` (try-it-now for 18 endpoints)
 - [x] Alert toast on worker health failure
 - [x] Worker detail page (`/workers/[name]`)
-
-## Done
 
 ### v0.12.0 — TypeScript SDK + Health Cards
 - [x] `nami-dashboard/src/lib/sdk.ts` — `NamiClient` (health, workers, dispatch, batchDispatch, SSE)
@@ -62,17 +74,13 @@
 - [x] 9 base workers (signal, proxy, lottery, bot, trading, gateway, status, bridge, graphify)
 - [x] Deploy scripts (systemd, nginx, install.sh)
 
-## Next: v0.14.0 — VPS Production Deploy
+## Next: v0.15.0 — Operational Hardening
 
-Blocked on Day 4–5 distribution outcome. **Do not start until Day 5 decision** says "deploy". See `.audit/NAMI_DAY3_5_UNIFIED_PLAN_2026-05-06.md`.
-
-- [ ] Install Redis on VPS (`bash deploy/setup-redis.sh`)
-- [ ] Remove `auth_basic` from public read endpoints (`/health`, `/workers`, `/metrics`, `/docs`, `/ws`)
-- [ ] Verify Redis cache backend (`curl https://nami.178.104.181.132.nip.io/cache`)
-- [ ] Backup `/opt/nami-core` before pull
-- [ ] Pull master and shadow-deploy
-- [ ] 24h shadow comparison vs current production services
-- [ ] nginx switchover only after shadow comparison passes
+- [ ] Production telemetry for runtime jobs (Prometheus counters per policy class)
+- [ ] Log-aggregation hook for runtime recovery events
+- [ ] Per-API-key rate limit (multi-tenant) on top of per-worker limits
+- [ ] MCP server health alerting through existing alert toast
+- [ ] Documentation site (mkdocs or Docusaurus) once external dev signal arrives
 
 ## Future: v0.15.0+ — Driven by Real Usage
 

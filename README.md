@@ -121,12 +121,12 @@ Environment-specific diagnostics policies can be set with `NAMI_RUNTIME_ENV` and
 ## Test Results
 
 ```
-225 passed in 37.66s
+258 passed in 42.79s
 ```
 
 ## Status
 
-**Current version: v0.13.0** (2026-05-06)
+**Current version: v0.14.0** (2026-05-07)
 
 Shipped highlights:
 - FastAPI server with batch dispatch, SSE streaming, webhook HMAC signing
@@ -140,9 +140,10 @@ Shipped highlights:
 - Audit trail (SQLite) and Prometheus metrics
 - TypeScript SDK + Next.js dashboard with interactive `/docs` page
 - Dashboard auto-deployed to Netlify
-- 225 tests in CI
+- 258 tests in CI
+- Runtime API v2 with tool registry, execution policy, persistent jobs, MCP client (stdio/SSE/WebSocket), and Phase 6 rollback diagnostics
 
-Next: Deploy v0.13.0 to VPS in shadow mode (Redis install + nginx fix pending).
+Deployed to VPS 2026-05-07 (Runtime API v2 + MCP client live).
 See `CHANGELOG.md` for the full per-version log.
 
 ## License

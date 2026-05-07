@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.14.0 — 2026-05-07
+
+### Added
+- **Runtime API v2** under `/runtime/*`: health, tools, tool invoke, jobs, events.
+- **Tool registry + execution policy**: classifies actions as `read_only`, `protected_read`, `mutating`, `dangerous`, `admin_only` with server-side enforcement.
+- **Persistent runtime jobs** with optional JSON storage via `NAMI_RUNTIME_JOBS_FILE`.
+- **MCP client** (`src/nami_core/mcp_client.py`) for `stdio`, `sse`, `websocket` transports with reconnect/health controls.
+- **MCP config loader** (`src/nami_core/mcp_config.py`) and `config/mcp_servers.example.yaml`.
+- `/runtime/mcp/servers`, `/runtime/mcp/tools`, `/runtime/mcp/tools/invoke`, `/runtime/mcp/reconnect`.
+- **Phase 6 rollback diagnostics**: pre/post git worktree snapshots, changed-file diagnostics, recovery metadata.
+- `/runtime/jobs/{job_id}/recovery/preview`, `/recovery/diff`, `/recovery/restore` (authenticated, with stale-candidate guard).
+- Diagnostics runners (Runtime API pytest, dashboard build) gated by `NAMI_RUNTIME_DIAGNOSTIC_CHECKS`.
+- Environment-specific diagnostics policies via `NAMI_RUNTIME_ENV` and `NAMI_RUNTIME_DIAGNOSTIC_POLICY_<ENV>`.
+- Runtime recovery events broadcast through WebSocket `runtime.event` channel.
+- Dashboard Runtime API v2 panel: tools, jobs, snapshot detail, recovery preview/diff/restore, MCP servers, MCP tool invocation, MCP reconnect.
+- TypeScript SDK helpers for Runtime API v2 and MCP.
+- `tests/test_runtime_api_v2.py` (772 lines) and `tests/test_mcp_config.py` (67 lines).
+- `docs/codex-handoff.md` and `docs/deepseek-tui-adaptation-plan.md`.
+
+### Changed
+- **App version**: 0.13.0 -> 0.14.0.
+- **`pyproject.toml` version**: 0.3.0 -> 0.14.0 (sync with runtime app).
+- Discovered MCP tools share `/runtime/tools` with worker tools (single registry surface).
+- **Tests**: 225 -> 258 passed (+33).
+
+### Notes
+- Runtime API v2 endpoints are additive; existing dispatch/workers behavior unchanged.
+- MCP is opt-in (no servers configured by default).
+
 ## 0.13.0 — 2026-05-06
 
 ### Added

@@ -112,7 +112,7 @@ class StdioMcpSession:
             stderr=asyncio.subprocess.PIPE,
             env=env,
         )
-        await self.request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "nami-core", "version": "0.13.0"}})
+        await self.request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "nami-core", "version": "0.14.0"}})
         await self.notify("notifications/initialized", {})
 
     async def close(self) -> None:
@@ -171,7 +171,7 @@ class HttpMcpSession:
         self._lock = asyncio.Lock()
 
     async def start(self) -> None:
-        await self.request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "nami-core", "version": "0.13.0"}})
+        await self.request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "nami-core", "version": "0.14.0"}})
 
     async def close(self) -> None:
         return
@@ -236,7 +236,7 @@ class WebSocketMcpSession:
         except ImportError as exc:
             raise McpClientError("websocket MCP transport requires the websockets package") from exc
         self._socket = await websockets.connect(self.server.url)
-        await self.request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "nami-core", "version": "0.13.0"}})
+        await self.request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "nami-core", "version": "0.14.0"}})
         await self.notify("notifications/initialized", {})
 
     async def close(self) -> None:
