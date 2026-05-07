@@ -24,6 +24,7 @@ Completed:
 - Mutating worker diagnostics include narrow Runtime API pytest and dashboard build runners when project files are present.
 - Diagnostics runner selection is explicit through `NAMI_RUNTIME_DIAGNOSTIC_CHECKS` with unknown checks ignored and `none` disabling runners.
 - Deployment docs describe runtime diagnostics check selection for VPS/runtime operations.
+- Mutation diagnostics include recovery metadata for manual review, candidate files, and safe inspection commands.
 
 Verified locally:
 
@@ -35,10 +36,10 @@ Verified locally:
 Next recommended work:
 
 - Phase 6 is complete in the current narrow scope.
-- Future work can add richer restore workflows, dashboard diff previews, and environment-specific diagnostics policies.
+- Future work can add one-click restore workflows, dashboard diff previews, and environment-specific diagnostics policies.
 
 Suggested prompt for Codex on VPS:
 
 ```text
-อ่าน docs/codex-handoff.md และ docs/deepseek-tui-adaptation-plan.md แล้วเลือกงานถัดไป: เพิ่ม richer restore workflows หรือ environment-specific diagnostics policies พร้อม tests และ commit
+อ่าน docs/codex-handoff.md และ docs/deepseek-tui-adaptation-plan.md แล้วเลือกงานถัดไป: เพิ่ม one-click restore workflows หรือ environment-specific diagnostics policies พร้อม tests และ commit
 ```

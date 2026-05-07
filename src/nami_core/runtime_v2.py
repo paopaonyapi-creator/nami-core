@@ -137,14 +137,22 @@ def build_mutating_tool_diagnostics(before: dict[str, Any], after: dict[str, Any
     before_files = set(before.get("changed_files") or [])
     after_files = set(after.get("changed_files") or [])
     check_results = checks or []
+    changed_files = sorted(after_files)
+    new_changed_files = sorted(after_files - before_files)
     return {
         "ok": bool(before.get("ok")) and bool(after.get("ok")) and all(check.get("ok") for check in check_results),
-        "changed_files": sorted(after_files),
-        "new_changed_files": sorted(after_files - before_files),
+        "changed_files": changed_files,
+        "new_changed_files": new_changed_files,
         "resolved_files": sorted(before_files - after_files),
         "before_count": len(before_files),
         "after_count": len(after_files),
         "checks": check_results,
+        "recovery": {
+            "manual_review_required": bool(changed_files),
+            "candidate_files": changed_files,
+            "new_candidate_files": new_changed_files,
+            "suggested_commands": ["git status --short", "git diff --stat", "git diff -- <path>"],
+        },
     }
 
 

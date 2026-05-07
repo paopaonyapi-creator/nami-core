@@ -181,6 +181,8 @@ def test_runtime_tool_invoke_runs_mutating_action_after_approval(monkeypatch):
     assert data["job"]["result"]["snapshot"]["after"]["changed_files"] == ["src/nami_core/app.py"]
     assert data["job"]["result"]["diagnostics"]["new_changed_files"] == ["src/nami_core/app.py"]
     assert data["job"]["result"]["diagnostics"]["checks"][0]["name"] == "runtime_pytest"
+    assert data["job"]["result"]["diagnostics"]["recovery"]["manual_review_required"] is True
+    assert data["job"]["result"]["diagnostics"]["recovery"]["candidate_files"] == ["src/nami_core/app.py"]
     assert data["job"]["audit_entries"][1]["diagnostics"]["after_count"] == 1
 
 def test_runtime_mcp_servers_lists_configured_servers(tmp_path, monkeypatch):
