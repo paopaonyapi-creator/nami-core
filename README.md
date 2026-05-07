@@ -1,5 +1,11 @@
 # Nami Core
 
+[![CI](https://github.com/paopaonyapi-creator/nami-core/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/paopaonyapi-creator/nami-core/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/paopaonyapi-creator/nami-core?include_prereleases&sort=semver)](https://github.com/paopaonyapi-creator/nami-core/releases/latest)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/tests-260%20passing-brightgreen)](https://github.com/paopaonyapi-creator/nami-core/actions)
+[![License](https://img.shields.io/github/license/paopaonyapi-creator/nami-core)](LICENSE)
+
 ![Nami Core Dashboard](docs/img/dashboard-overview.png)
 
 Unified agentic system: **Hermes brain** + **Harness control** + **9 worker plugins**.
