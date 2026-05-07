@@ -502,6 +502,24 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
         return job.to_dict()
 
+    @app.get("/runtime/jobs/{job_id}/recovery/preview")
+    async def runtime_job_recovery_preview(job_id: str):
+        Metrics.request_count += 1
+        job = app.state.runtime_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
+        diagnostics = (job.result or {}).get("diagnostics") or {}
+        recovery = diagnostics.get("recovery") or {}
+        return {
+            "job_id": job.id,
+            "requested_action": job.requested_action,
+            "manual_review_required": bool(recovery.get("manual_review_required")),
+            "candidate_files": recovery.get("candidate_files") or [],
+            "new_candidate_files": recovery.get("new_candidate_files") or [],
+            "suggested_commands": recovery.get("suggested_commands") or [],
+            "restore_supported": False,
+        }
+
     @app.get("/runtime/events")
     async def runtime_events(request: Request, test: bool = False):
         from starlette.responses import StreamingResponse

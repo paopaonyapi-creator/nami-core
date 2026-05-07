@@ -26,6 +26,7 @@ Completed:
 - Deployment docs describe runtime diagnostics check selection for VPS/runtime operations.
 - Mutation diagnostics include recovery metadata for manual review, candidate files, and safe inspection commands.
 - Dashboard Runtime API v2 detail view shows recovery preview metadata without automatic restore.
+- `/runtime/jobs/{job_id}/recovery/preview` exposes recovery metadata as a read-only API response with `restore_supported: false`.
 
 Verified locally:
 
@@ -37,10 +38,10 @@ Verified locally:
 Next recommended work:
 
 - Phase 6 is complete in the current narrow scope.
-- Future work can add one-click restore workflows, dashboard diff previews, and environment-specific diagnostics policies.
+- Future work can add authenticated one-click restore workflows, dashboard diff previews, and environment-specific diagnostics policies.
 
 Suggested prompt for Codex on VPS:
 
 ```text
-อ่าน docs/codex-handoff.md และ docs/deepseek-tui-adaptation-plan.md แล้วเลือกงานถัดไป: เพิ่ม one-click restore workflows หรือ environment-specific diagnostics policies พร้อม tests และ commit
+อ่าน docs/codex-handoff.md และ docs/deepseek-tui-adaptation-plan.md แล้วเลือกงานถัดไป: เพิ่ม authenticated one-click restore workflows หรือ environment-specific diagnostics policies พร้อม tests และ commit
 ```
