@@ -469,3 +469,152 @@ servers:
     finally:
         loop.call_soon_threadsafe(loop.stop)
         thread.join(5)
+
+
+def test_runtime_mcp_tools_reports_health_fields_for_connected_server(tmp_path, monkeypatch):
+    server_script = tmp_path / "mock_mcp_server.py"
+    server_script.write_text(
+        """
+import json
+import sys
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if "id" not in msg:
+        continue
+    method = msg.get("method")
+    if method == "tools/list":
+        result = {"tools": [{"name": "echo", "description": "Echo", "inputSchema": {"type": "object"}}]}
+    else:
+        result = {}
+    print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result}), flush=True)
+""",
+        encoding="utf-8",
+    )
+    config_file = tmp_path / "mcp.yaml"
+    config_file.write_text(
+        f"""
+servers:
+  - name: local_tools
+    transport: stdio
+    command: {sys.executable}
+    args:
+      - {server_script}
+    tool_prefix: mcp.local
+    permission_level: read_only
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAMI_MCP_CONFIG_FILE", str(config_file))
+
+    with _client() as client:
+        response = client.get("/runtime/mcp/tools")
+        assert response.status_code == 200
+        server = response.json()["servers"][0]
+        assert server["status"] == "connected"
+        assert server["last_checked_at"] is not None
+        assert server["failure_count"] == 0
+        assert server["next_retry_at"] is None
+
+
+def test_runtime_mcp_tools_retry_health_for_failed_server(tmp_path, monkeypatch):
+    config_file = tmp_path / "mcp.yaml"
+    config_file.write_text(
+        """
+servers:
+  - name: remote_search
+    transport: sse
+    url: http://127.0.0.1:1/sse
+    tool_prefix: mcp.remote
+    permission_level: read_only
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAMI_MCP_CONFIG_FILE", str(config_file))
+
+    client = _client()
+    response = client.get("/runtime/mcp/tools")
+    assert response.status_code == 200
+    server = response.json()["servers"][0]
+    assert server["status"] == "error"
+    assert server["last_checked_at"] is not None
+    assert server["failure_count"] == 1
+    assert server["next_retry_at"] is not None
+
+
+def test_runtime_mcp_server_reconnect_requires_api_key(tmp_path, monkeypatch):
+    config_file = tmp_path / "mcp.yaml"
+    config_file.write_text(
+        """
+servers:
+  - name: remote_search
+    transport: sse
+    url: http://127.0.0.1:1/sse
+    tool_prefix: mcp.remote
+    permission_level: read_only
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAMI_MCP_CONFIG_FILE", str(config_file))
+
+    client = _client()
+    response = client.post("/runtime/mcp/servers/remote_search/reconnect")
+    assert response.status_code == 401
+    assert response.json()["detail"] == "api key required"
+
+
+def test_runtime_mcp_server_reconnect_discovers_tools(tmp_path, monkeypatch):
+    server_script = tmp_path / "mock_mcp_server.py"
+    server_script.write_text(
+        """
+import json
+import sys
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if "id" not in msg:
+        continue
+    method = msg.get("method")
+    if method == "tools/list":
+        result = {"tools": [{"name": "echo", "description": "Echo", "inputSchema": {"type": "object"}}]}
+    else:
+        result = {}
+    print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result}), flush=True)
+""",
+        encoding="utf-8",
+    )
+    config_file = tmp_path / "mcp.yaml"
+    config_file.write_text(
+        f"""
+servers:
+  - name: local_tools
+    transport: stdio
+    command: {sys.executable}
+    args:
+      - {server_script}
+    tool_prefix: mcp.local
+    permission_level: read_only
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAMI_MCP_CONFIG_FILE", str(config_file))
+
+    with _client() as client:
+        response = client.post("/runtime/mcp/servers/local_tools/reconnect", headers={"Authorization": "Bearer test-key"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["server"]["status"] == "connected"
+        assert data["server"]["failure_count"] == 0
+        assert data["server"]["next_retry_at"] is None
+        assert data["server"]["tools"][0]["name"] == "mcp.local.echo"
+
+
+def test_runtime_mcp_server_reconnect_missing_server_returns_404(tmp_path, monkeypatch):
+    config_file = tmp_path / "mcp.yaml"
+    config_file.write_text("servers: []\n", encoding="utf-8")
+    monkeypatch.setenv("NAMI_MCP_CONFIG_FILE", str(config_file))
+
+    client = _client()
+    response = client.post("/runtime/mcp/servers/missing/reconnect", headers={"Authorization": "Bearer test-key"})
+    assert response.status_code == 404

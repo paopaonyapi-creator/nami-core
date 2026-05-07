@@ -309,6 +309,21 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             "enabled_count": len(enabled),
         }
 
+    @app.post("/runtime/mcp/servers/{server_name}/reconnect")
+    async def runtime_mcp_server_reconnect(server_name: str, request: Request, authorization: str = Header(default="")):
+        Metrics.request_count += 1
+        authenticated = False
+        if app.state.api_key:
+            key = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+            authenticated = key == app.state.api_key
+        if app.state.api_key and not authenticated:
+            raise HTTPException(status_code=401, detail="api key required")
+        try:
+            server = await app.state.mcp_client.reconnect(server_name)
+            return {"ok": True, "server": server.to_dict()}
+        except McpClientError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
     @app.get("/runtime/mcp/tools")
     async def runtime_mcp_tools(request: Request):
         Metrics.request_count += 1

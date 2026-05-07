@@ -295,11 +295,12 @@ Completed narrow Runtime API v2 foundation on 2026-05-06:
 - Replaced the `/runtime/mcp/tools` skeleton with live `stdio`, `sse`, and `websocket` discovery, per-server connection status, and discovered tool metadata.
 - Added `/runtime/mcp/tools/invoke` for policy-gated MCP tool calls with runtime jobs, audit entries, buffered events, and WebSocket `runtime.event` broadcasts.
 - Added dashboard and TypeScript SDK support for discovered MCP tool counts, server status, tool selection, and MCP invocation.
-- Added regression coverage for Runtime API v2, MCP config loading, MCP `stdio`, `sse`, and `websocket` discovery/invocation, and protected MCP tool policy enforcement.
+- Added MCP server health fields with last-check timestamps, failure counts, retry scheduling, and explicit reconnect support.
+- Added dashboard MCP lifecycle controls for reconnecting enabled servers and surfacing failure/retry status.
+- Added regression coverage for Runtime API v2, MCP config loading, MCP `stdio`, `sse`, and `websocket` discovery/invocation, protected MCP tool policy enforcement, and MCP reconnect/health reporting.
 
 Remaining next work:
 
-- Add richer MCP server health checks, reconnect/backoff behavior, and dashboard lifecycle controls.
 - Expose discovered MCP tools through the central Nami runtime registry if a single registry surface is required.
 
 ## Notes

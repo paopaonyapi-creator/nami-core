@@ -29,7 +29,7 @@ interface RuntimeTool { name: string; description: string; permission_level: str
 interface RuntimeJob { id: string; status: string; requested_action: string; updated_at: string; error?: string | null }
 interface RuntimeStreamEvent { type: string; timestamp: string; job_id?: string | null; data?: Record<string, unknown> }
 interface RuntimeMcpServer { name: string; transport: string; command?: string | null; args: string[]; url?: string | null; enabled: boolean; tool_namespace: string; permission_level: string; status: string; status_detail: string }
-interface RuntimeMcpToolServer { server: string; tool_namespace: string; enabled: boolean; status: string; status_detail: string; tools: RuntimeTool[]; tool_count: number }
+interface RuntimeMcpToolServer { server: string; tool_namespace: string; enabled: boolean; status: string; status_detail: string; last_checked_at?: string | null; failure_count?: number; next_retry_at?: string | null; tools: RuntimeTool[]; tool_count: number }
 
 async function apiFetch<T>(path: string): Promise<T> {
   const r = await fetch(`${API_BASE}${path}`);
@@ -513,6 +513,22 @@ function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { 
     return () => es.close();
   }, [onRefresh]);
 
+  const reconnectMcpServer = async (serverName: string) => {
+    setLoading(true);
+    try {
+      const headers: Record<string, string> = {};
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+      const response = await fetch(`${API_BASE}/runtime/mcp/servers/${encodeURIComponent(serverName)}/reconnect`, { method: "POST", headers });
+      const data = await response.json().catch(() => ({}));
+      setResult(JSON.stringify(data, null, 2));
+      if (response.ok) onRefresh();
+    } catch (e) {
+      setResult(`Error: ${e}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const invokeTool = async () => {
     if (!activeTool?.worker || !activeTool.action || denied) return;
     if (needsApproval && approvedTool !== activeTool.name) {
@@ -591,9 +607,12 @@ function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { 
             <div className="flex items-center gap-2 text-xs text-gold-dim mb-2"><Network size={13} /> MCP servers</div>
             <div className="flex flex-col gap-1 max-h-32 overflow-y-auto">
               {mcpServers.map(server => (
-                <div key={server.server} className="runtime-row" title={server.status_detail}>
+                <div key={server.server} className="runtime-row" title={`${server.status_detail}${server.next_retry_at ? ` | retry ${server.next_retry_at}` : ""}`}>
                   <span className="truncate">{server.tool_namespace}</span>
-                  <span className={server.enabled ? "text-green-400" : "text-dim"}>{server.status}</span>
+                  <span className="flex items-center gap-2">
+                    <span className={server.status === "connected" ? "text-green-400" : server.status === "error" ? "text-red-400" : server.enabled ? "text-orange-400" : "text-dim"}>{server.status}{server.failure_count ? ` (${server.failure_count})` : ""}</span>
+                    {server.enabled && <button type="button" className="runtime-icon-btn" onClick={() => reconnectMcpServer(server.server)} disabled={loading} title="Reconnect MCP server"><RefreshCw size={12} /></button>}
+                  </span>
                 </div>
               ))}
               {mcpServers.length === 0 && <div className="text-xs text-dim">No MCP servers configured</div>}

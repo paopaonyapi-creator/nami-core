@@ -1,4 +1,4 @@
-﻿"""Minimal MCP client support for Nami Core."""
+"""Minimal MCP client support for Nami Core."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import json
 import os
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -54,6 +55,9 @@ class McpServerRuntime:
     status: str = "configured"
     status_detail: str = "configured; connection not opened"
     tools: list[McpTool] = field(default_factory=list)
+    last_checked_at: str | None = None
+    failure_count: int = 0
+    next_retry_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -62,6 +66,9 @@ class McpServerRuntime:
             "enabled": self.server.enabled,
             "status": self.status,
             "status_detail": self.status_detail,
+            "last_checked_at": self.last_checked_at,
+            "failure_count": self.failure_count,
+            "next_retry_at": self.next_retry_at,
             "tools": [tool.to_dict() for tool in self.tools],
             "tool_count": len(self.tools),
         }
@@ -281,13 +288,31 @@ class McpClientManager:
         await asyncio.gather(*(session.close() for session in self._sessions.values()), return_exceptions=True)
         self._sessions.clear()
 
-    async def discover(self) -> None:
-        for server in self.config.servers:
+    async def reconnect(self, server_name: str) -> McpServerRuntime:
+        runtime = self._servers.get(server_name)
+        if runtime is None:
+            raise McpClientError(f"MCP server not configured: {server_name}")
+        session = self._sessions.pop(server_name, None)
+        if session is not None:
+            await session.close()
+        self._tools = {name: tool for name, tool in self._tools.items() if tool.server != server_name}
+        runtime.status = runtime.server.status()
+        runtime.status_detail = "reconnect requested"
+        runtime.tools = []
+        runtime.next_retry_at = None
+        await self.discover(server_name)
+        return runtime
+
+    async def discover(self, server_name: str | None = None) -> None:
+        servers = [server for server in self.config.servers if server_name is None or server.name == server_name]
+        for server in servers:
             runtime = self._servers[server.name]
             runtime.tools = []
+            runtime.last_checked_at = datetime.now(timezone.utc).isoformat()
             if not server.enabled:
                 runtime.status = "disabled"
                 runtime.status_detail = "server disabled in config"
+                runtime.next_retry_at = None
                 continue
             try:
                 session = self._sessions.get(server.name)
@@ -323,9 +348,14 @@ class McpClientManager:
                 runtime.tools = discovered
                 runtime.status = "connected"
                 runtime.status_detail = f"connected; {len(discovered)} tools discovered"
+                runtime.failure_count = 0
+                runtime.next_retry_at = None
             except Exception as exc:
                 runtime.status = "error"
                 runtime.status_detail = str(exc)
+                runtime.failure_count += 1
+                retry_delay = min(300, 2 ** min(runtime.failure_count, 8))
+                runtime.next_retry_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + retry_delay, timezone.utc).isoformat()
 
     def servers(self) -> list[McpServerRuntime]:
         return [self._servers[server.name] for server in self.config.servers]
