@@ -22,6 +22,7 @@ Completed:
 - Dashboard recent jobs show mutation diagnostics summaries with changed/new file counts and first changed path.
 - Dashboard Runtime API v2 panel provides selectable mutation snapshot detail views with pre/post git status output.
 - Mutating worker diagnostics include narrow Runtime API pytest and dashboard build runners when project files are present.
+- Diagnostics runner selection is explicit through `NAMI_RUNTIME_DIAGNOSTIC_CHECKS` with unknown checks ignored and `none` disabling runners.
 
 Verified locally:
 
@@ -33,10 +34,10 @@ Verified locally:
 Next recommended work:
 
 - Continue Phase 6 from `docs/deepseek-tui-adaptation-plan.md`.
-- Expand diagnostics selection beyond the narrow default checks and make runner configuration explicit.
+- Promote diagnostics runner configuration into documented deployment config when runtime operations need environment-specific policies.
 
 Suggested prompt for Codex on VPS:
 
 ```text
-อ่าน docs/codex-handoff.md และ docs/deepseek-tui-adaptation-plan.md แล้วทำ Phase 6 ต่อ: ทำ diagnostics runner configuration ให้ explicit และขยายการเลือก checks แบบปลอดภัย พร้อม tests และ commit
+อ่าน docs/codex-handoff.md และ docs/deepseek-tui-adaptation-plan.md แล้วทำ Phase 6 ต่อ: promote diagnostics runner configuration into deployment docs/config พร้อม tests และ commit
 ```

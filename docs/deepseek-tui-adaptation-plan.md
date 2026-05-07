@@ -303,10 +303,11 @@ Completed narrow Runtime API v2 foundation on 2026-05-06:
 - Added dashboard visibility for mutation diagnostics in the Runtime API v2 recent jobs list, including changed/new file counts and first changed path.
 - Added dashboard snapshot detail views for mutation diagnostics with selectable recent jobs and pre/post git status output.
 - Added narrow diagnostics runners for approved mutating worker tool invokes, running Runtime API pytest checks and dashboard production builds when those project files are present.
+- Added explicit diagnostics selection through `NAMI_RUNTIME_DIAGNOSTIC_CHECKS`, supporting safe configured checks and `none` for disabling automatic runners.
 
 Remaining next work:
 
-- Expand diagnostics selection beyond the narrow default checks and make runner configuration explicit.
+- Promote diagnostics runner configuration into documented deployment config when runtime operations need environment-specific policies.
 
 ## Notes
 

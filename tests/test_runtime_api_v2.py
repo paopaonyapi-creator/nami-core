@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 import nami_core.app as app_module
 from nami_core.app import create_app
 from nami_core.hermes import Hermes
-from nami_core.runtime_v2 import RuntimeEvent, RuntimeJobStore, ToolRegistry
+from nami_core.runtime_v2 import RuntimeEvent, RuntimeJobStore, ToolRegistry, selected_runtime_diagnostic_checks
 from nami_harness.runtime import HarnessContext, HarnessResult, HarnessRuntime
 
 
@@ -135,6 +135,13 @@ def test_tool_registry_classifies_policy_levels():
     assert registry.get("status.send").read_only is False
     assert registry.get("status.delete").permission_level == "dangerous"
     assert registry.get("status.delete").read_only is False
+
+
+def test_runtime_diagnostic_check_selection():
+    assert selected_runtime_diagnostic_checks("runtime_pytest,dashboard_build") == ["runtime_pytest", "dashboard_build"]
+    assert selected_runtime_diagnostic_checks("runtime_pytest,unknown") == ["runtime_pytest"]
+    assert selected_runtime_diagnostic_checks("none") == []
+    assert selected_runtime_diagnostic_checks("") == []
 
 
 def test_runtime_tool_invoke_requires_approval_for_mutating_action():

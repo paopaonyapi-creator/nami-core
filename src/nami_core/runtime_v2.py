@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any, Literal
@@ -84,13 +85,30 @@ def capture_git_worktree_snapshot(cwd: str | None = None) -> dict[str, Any]:
     }
 
 
-def run_runtime_diagnostics(cwd: str | None = None) -> list[dict[str, Any]]:
+_DIAGNOSTIC_COMMANDS = {
+    "runtime_pytest": ("tests/test_runtime_api_v2.py", ["python", "-m", "pytest", "-q", "tests/test_runtime_api_v2.py"], "."),
+    "dashboard_build": ("nami-dashboard/package.json", ["npm", "run", "build"], "nami-dashboard"),
+}
+
+
+def selected_runtime_diagnostic_checks(config_value: str | None = None) -> list[str]:
+    raw = config_value if config_value is not None else os.environ.get("NAMI_RUNTIME_DIAGNOSTIC_CHECKS", "runtime_pytest,dashboard_build")
+    names = [item.strip() for item in raw.split(",") if item.strip()]
+    if not names or names == ["none"]:
+        return []
+    return [name for name in names if name in _DIAGNOSTIC_COMMANDS]
+
+
+def run_runtime_diagnostics(cwd: str | None = None, checks: list[str] | None = None) -> list[dict[str, Any]]:
     root = Path(cwd or ".")
     commands: list[tuple[str, list[str], Path]] = []
-    if (root / "tests" / "test_runtime_api_v2.py").exists():
-        commands.append(("runtime_pytest", ["python", "-m", "pytest", "-q", "tests/test_runtime_api_v2.py"], root))
-    if (root / "nami-dashboard" / "package.json").exists():
-        commands.append(("dashboard_build", ["npm", "run", "build"], root / "nami-dashboard"))
+    for name in selected_runtime_diagnostic_checks() if checks is None else checks:
+        configured = _DIAGNOSTIC_COMMANDS.get(name)
+        if configured is None:
+            continue
+        marker, command, relative_cwd = configured
+        if (root / marker).exists():
+            commands.append((name, command, root / relative_cwd))
     results = []
     for name, command, command_cwd in commands:
         try:
