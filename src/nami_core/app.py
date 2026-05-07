@@ -17,6 +17,10 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket,
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from nami_core.mcp_client import McpClientError, McpClientManager
+from nami_core.mcp_config import McpConfig, load_mcp_config
+from nami_core.runtime_v2 import ExecutionPolicy, RuntimeEvent, RuntimeJobStore, ToolRegistry
+
 logger = logging.getLogger("nami_core.app")
 
 # ── Audit trail ──
@@ -50,6 +54,7 @@ class DispatchRequest(BaseModel):
     worker: str
     action: str
     payload: dict[str, Any] = {}
+    approved: bool = False
 
 class WebhookRequest(BaseModel):
     source: str = "unknown"
@@ -73,6 +78,10 @@ class BatchDispatchRequest(BaseModel):
 class RotateKeyRequest(BaseModel):
     new_key: str
 
+class McpToolInvokeRequest(BaseModel):
+    tool: str
+    payload: dict[str, Any] = {}
+    approved: bool = False
 # ── Metrics state ──
 
 class Metrics:
@@ -222,7 +231,21 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
     app.state.scheduler = scheduler
     app.state.api_key = api_key
     app.state.ws_manager = ws_manager
+    app.state.tool_registry = ToolRegistry.from_hermes(hermes)
+    app.state.runtime_jobs = RuntimeJobStore(os.environ.get("NAMI_RUNTIME_JOBS_FILE") or None)
+    app.state.runtime_events = []
+    mcp_config_file = os.environ.get("NAMI_MCP_CONFIG_FILE")
+    app.state.mcp_config = load_mcp_config(mcp_config_file) if mcp_config_file else McpConfig()
+    app.state.mcp_client = McpClientManager(app.state.mcp_config)
 
+    @app.on_event("shutdown")
+    async def shutdown_mcp_client():
+        await app.state.mcp_client.close()
+
+    def record_runtime_event(event: RuntimeEvent) -> None:
+        app.state.runtime_events.append(event)
+        if len(app.state.runtime_events) > 500:
+            app.state.runtime_events = app.state.runtime_events[-500:]
     # ── Request logging middleware ──
 
     @app.middleware("http")
@@ -249,6 +272,229 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
 
     # ── Routes ──
 
+    @app.get("/runtime/health")
+    async def runtime_health(request: Request):
+        Metrics.request_count += 1
+        return {
+            "status": "ok",
+            "service": "nami-runtime-v2",
+            "core_status": "ok",
+            "workers": app.state.hermes.list_workers() if app.state.hermes else [],
+            "tools": len(app.state.tool_registry.list()),
+            "jobs": len(app.state.runtime_jobs.list()),
+            "scheduler": app.state.scheduler.status() if app.state.scheduler else {},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @app.get("/runtime/tools")
+    async def runtime_tools(request: Request):
+        Metrics.request_count += 1
+        ip = request.client.host if request.client else "-"
+        if not read_limiter.is_allowed(ip):
+            raise HTTPException(status_code=429, detail="rate limit exceeded")
+        return {"tools": [tool.to_dict() for tool in app.state.tool_registry.list()]}
+
+    @app.get("/runtime/mcp/servers")
+    async def runtime_mcp_servers(request: Request):
+        Metrics.request_count += 1
+        ip = request.client.host if request.client else "-"
+        if not read_limiter.is_allowed(ip):
+            raise HTTPException(status_code=429, detail="rate limit exceeded")
+        servers = app.state.mcp_config.servers
+        enabled = app.state.mcp_config.enabled_servers()
+        return {
+            "servers": [server.to_dict() for server in servers],
+            "enabled": [server.name for server in enabled],
+            "count": len(servers),
+            "enabled_count": len(enabled),
+        }
+
+    @app.get("/runtime/mcp/tools")
+    async def runtime_mcp_tools(request: Request):
+        Metrics.request_count += 1
+        ip = request.client.host if request.client else "-"
+        if not read_limiter.is_allowed(ip):
+            raise HTTPException(status_code=429, detail="rate limit exceeded")
+        await app.state.mcp_client.discover()
+        servers = [server.to_dict() for server in app.state.mcp_client.servers()]
+        tools = [tool.to_dict() for tool in app.state.mcp_client.tools()]
+        connected = any(server["status"] == "connected" for server in servers)
+        errored = any(server["status"] == "error" for server in servers)
+        return {
+            "servers": servers,
+            "tools": tools,
+            "tool_count": len(tools),
+            "discovery_status": "connected" if connected else "error" if errored else "not_connected",
+        }
+
+    @app.post("/runtime/mcp/tools/invoke")
+    async def runtime_mcp_tool_invoke(req: McpToolInvokeRequest, request: Request, authorization: str = Header(default="")):
+        Metrics.request_count += 1
+        await app.state.mcp_client.discover()
+        tool = app.state.mcp_client.get_tool(req.tool)
+        if tool is None:
+            raise HTTPException(status_code=404, detail=f"MCP tool not registered: {req.tool}")
+        metadata = tool.to_metadata()
+        authenticated = False
+        if app.state.api_key:
+            key = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+            authenticated = key == app.state.api_key
+        decision = ExecutionPolicy.decide(metadata, authenticated)
+        if decision == "require_api_key":
+            raise HTTPException(status_code=401, detail="api key required")
+        if decision == "require_approval":
+            if not authenticated or not req.approved:
+                raise HTTPException(status_code=403, detail="approval required")
+        if decision == "deny":
+            raise HTTPException(status_code=403, detail="tool denied by policy")
+        job = app.state.runtime_jobs.create(req.tool, json.dumps(req.payload, ensure_ascii=False, default=str)[:240])
+        job.status = "running"
+        job.updated_at = datetime.now(timezone.utc).isoformat()
+        started = RuntimeEvent(type="tool.started", job_id=job.id, data={"tool": req.tool, "server": tool.server})
+        job.progress_events.append(started)
+        job.audit_entries.append({"event": "tool.started", "worker": "mcp", "action": req.tool, "ok": None, "timestamp": started.timestamp})
+        app.state.runtime_jobs.save(job)
+        record_runtime_event(started)
+        try:
+            t0 = time.monotonic()
+            output = await app.state.mcp_client.call_tool(req.tool, req.payload)
+            latency = (time.monotonic() - t0) * 1000
+            Metrics.record_dispatch(latency)
+            _audit_log("mcp", req.tool, request.client.host if request.client else "-", True, latency)
+            job.status = "completed"
+            job.updated_at = datetime.now(timezone.utc).isoformat()
+            job.result = {"ok": True, "output": output, "latency_ms": round(latency, 1)}
+            completed = RuntimeEvent(type="job.completed", job_id=job.id, data=job.result)
+            job.progress_events.append(RuntimeEvent(type="tool.completed", job_id=job.id, data=job.result))
+            job.audit_entries.append({"event": "tool.completed", "worker": "mcp", "action": req.tool, "ok": True, "latency_ms": round(latency, 1), "timestamp": completed.timestamp})
+            app.state.runtime_jobs.save(job)
+            record_runtime_event(completed)
+            await ws_manager.broadcast("runtime.event", completed.to_dict())
+            return {"ok": True, "job": job.to_dict(), "output": output, "latency_ms": round(latency, 1)}
+        except McpClientError as exc:
+            Metrics.record_error()
+            _audit_log("mcp", req.tool, request.client.host if request.client else "-", False, 0)
+            job.status = "failed"
+            job.updated_at = datetime.now(timezone.utc).isoformat()
+            job.error = str(exc)
+            failed = RuntimeEvent(type="job.failed", job_id=job.id, data={"error": str(exc)})
+            job.progress_events.append(RuntimeEvent(type="tool.failed", job_id=job.id, data={"error": str(exc)}))
+            job.audit_entries.append({"event": "tool.failed", "worker": "mcp", "action": req.tool, "ok": False, "error": str(exc), "timestamp": failed.timestamp})
+            app.state.runtime_jobs.save(job)
+            record_runtime_event(failed)
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @app.post("/runtime/tools/invoke")
+    async def runtime_tool_invoke(req: DispatchRequest, request: Request, authorization: str = Header(default="")):
+        Metrics.request_count += 1
+        tool_name = f"{req.worker}.{req.action}"
+        tool = app.state.tool_registry.get(tool_name)
+        if tool is None:
+            raise HTTPException(status_code=404, detail=f"tool not registered: {tool_name}")
+        authenticated = False
+        if app.state.api_key:
+            key = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+            authenticated = key == app.state.api_key
+        decision = ExecutionPolicy.decide(tool, authenticated)
+        if decision == "require_api_key":
+            raise HTTPException(status_code=401, detail="api key required")
+        if decision == "require_approval":
+            if not authenticated or not req.approved:
+                raise HTTPException(status_code=403, detail="approval required")
+        if decision == "deny":
+            raise HTTPException(status_code=403, detail="tool denied by policy")
+        job = app.state.runtime_jobs.create(tool_name, json.dumps(req.payload, ensure_ascii=False, default=str)[:240])
+        job.status = "running"
+        job.updated_at = datetime.now(timezone.utc).isoformat()
+        started = RuntimeEvent(type="tool.started", job_id=job.id, data={"tool": tool_name})
+        job.progress_events.append(started)
+        job.audit_entries.append({"event": "tool.started", "worker": req.worker, "action": req.action, "ok": None, "timestamp": started.timestamp})
+        app.state.runtime_jobs.save(job)
+        record_runtime_event(started)
+        try:
+            t0 = time.monotonic()
+            result = app.state.hermes.dispatch(req.worker, req.action, req.payload)
+            latency = (time.monotonic() - t0) * 1000
+            Metrics.record_dispatch(latency)
+            _audit_log(req.worker, req.action, request.client.host if request.client else "-", True, latency)
+            job.status = "completed"
+            job.updated_at = datetime.now(timezone.utc).isoformat()
+            job.result = {"ok": True, "output": result.output, "latency_ms": round(latency, 1)}
+            completed = RuntimeEvent(type="job.completed", job_id=job.id, data=job.result)
+            job.progress_events.append(RuntimeEvent(type="tool.completed", job_id=job.id, data=job.result))
+            job.audit_entries.append({"event": "tool.completed", "worker": req.worker, "action": req.action, "ok": True, "latency_ms": round(latency, 1), "timestamp": completed.timestamp})
+            app.state.runtime_jobs.save(job)
+            record_runtime_event(completed)
+            await ws_manager.broadcast("runtime.event", completed.to_dict())
+            return {"ok": True, "job": job.to_dict(), "output": result.output, "latency_ms": round(latency, 1)}
+        except ValueError as exc:
+            Metrics.record_error()
+            _audit_log(req.worker, req.action, request.client.host if request.client else "-", False, 0)
+            job.status = "failed"
+            job.updated_at = datetime.now(timezone.utc).isoformat()
+            job.error = str(exc)
+            failed = RuntimeEvent(type="job.failed", job_id=job.id, data={"error": str(exc)})
+            job.progress_events.append(RuntimeEvent(type="tool.failed", job_id=job.id, data={"error": str(exc)}))
+            job.audit_entries.append({"event": "tool.failed", "worker": req.worker, "action": req.action, "ok": False, "error": str(exc), "timestamp": failed.timestamp})
+            app.state.runtime_jobs.save(job)
+            record_runtime_event(failed)
+            raise HTTPException(status_code=404, detail=str(exc))
+        except Exception as exc:
+            Metrics.record_error()
+            _audit_log(req.worker, req.action, request.client.host if request.client else "-", False, 0)
+            job.status = "failed"
+            job.updated_at = datetime.now(timezone.utc).isoformat()
+            job.error = str(exc)
+            failed = RuntimeEvent(type="job.failed", job_id=job.id, data={"error": str(exc)})
+            job.progress_events.append(RuntimeEvent(type="tool.failed", job_id=job.id, data={"error": str(exc)}))
+            job.audit_entries.append({"event": "tool.failed", "worker": req.worker, "action": req.action, "ok": False, "error": str(exc), "timestamp": failed.timestamp})
+            app.state.runtime_jobs.save(job)
+            record_runtime_event(failed)
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.get("/runtime/jobs")
+    async def runtime_jobs(request: Request):
+        Metrics.request_count += 1
+        return {"jobs": [job.to_dict() for job in app.state.runtime_jobs.list()]}
+
+    @app.get("/runtime/jobs/{job_id}")
+    async def runtime_job_detail(job_id: str):
+        Metrics.request_count += 1
+        job = app.state.runtime_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
+        return job.to_dict()
+
+    @app.get("/runtime/events")
+    async def runtime_events(request: Request, test: bool = False):
+        from starlette.responses import StreamingResponse
+
+        async def event_generator():
+            ready = RuntimeEvent(type="runtime.ready", data={"tools": len(app.state.tool_registry.list())})
+            yield f"event: {ready.type}\ndata: {json.dumps(ready.to_dict(), ensure_ascii=False, default=str)}\n\n"
+            sent = 0
+            while sent < len(app.state.runtime_events):
+                event = app.state.runtime_events[sent]
+                sent += 1
+                yield f"event: {event.type}\nid: {sent}\ndata: {json.dumps(event.to_dict(), ensure_ascii=False, default=str)}\n\n"
+            if test:
+                return
+            while True:
+                if await request.is_disconnected():
+                    break
+                while sent < len(app.state.runtime_events):
+                    event = app.state.runtime_events[sent]
+                    sent += 1
+                    yield f"event: {event.type}\nid: {sent}\ndata: {json.dumps(event.to_dict(), ensure_ascii=False, default=str)}\n\n"
+                await asyncio.sleep(15)
+                ping = RuntimeEvent(type="runtime.ready", data={"event_id": sent})
+                yield f": heartbeat\n\nevent: {ping.type}\nid: {sent}\ndata: {json.dumps(ping.to_dict(), ensure_ascii=False, default=str)}\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        )
     @app.get("/health")
     async def health(request: Request):
         Metrics.request_count += 1

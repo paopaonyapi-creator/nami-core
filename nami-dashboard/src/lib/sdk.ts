@@ -14,6 +14,18 @@ export interface BatchResult { worker: string; action: string; ok: boolean; outp
 export interface BatchResponse { results: BatchResult[] }
 export interface WorkerHealthResponse { worker: string; healthy: boolean | null; response?: Record<string, unknown>; error?: string; latency_ms: number; actions: string[]; message?: string }
 export interface RateLimitResponse { worker: string; max_requests: number; window_seconds: number; active: boolean; current_hits: number }
+export interface RuntimeHealthResponse { status: string; service: string; core_status: string; workers: string[]; tools: number; jobs: number; scheduler: Record<string, unknown>; timestamp: string }
+export interface RuntimeTool { name: string; description: string; input_schema: Record<string, unknown>; output_schema: Record<string, unknown>; permission_level: string; timeout_seconds: number; audit_category: string; read_only: boolean; worker: string | null; action: string | null }
+export interface RuntimeToolsResponse { tools: RuntimeTool[] }
+export interface RuntimeJob { id: string; status: string; created_at: string; updated_at: string; requested_action: string; input_summary: string; progress_events: Record<string, unknown>[]; result?: Record<string, unknown> | null; error?: string | null; audit_entries: Record<string, unknown>[] }
+export interface RuntimeJobsResponse { jobs: RuntimeJob[] }
+export interface RuntimeToolInvokeResponse { ok: boolean; job: RuntimeJob; output?: Record<string, unknown>; latency_ms?: number }
+export interface RuntimeToolInvokeRequest { worker: string; action: string; payload?: Record<string, unknown>; approved?: boolean }
+export interface RuntimeMcpServer { name: string; transport: string; command?: string | null; args: string[]; url?: string | null; env: Record<string, string>; enabled: boolean; tool_prefix?: string | null; tool_namespace: string; permission_level: string; status: string; status_detail: string }
+export interface RuntimeMcpServersResponse { servers: RuntimeMcpServer[]; enabled: string[]; count: number; enabled_count: number }
+export interface RuntimeMcpToolServer { server: string; tool_namespace: string; enabled: boolean; status: string; status_detail: string; tools: RuntimeTool[]; tool_count: number }
+export interface RuntimeMcpToolsResponse { servers: RuntimeMcpToolServer[]; tools: RuntimeTool[]; tool_count: number; discovery_status: string }
+export interface RuntimeMcpToolInvokeRequest { tool: string; payload?: Record<string, unknown>; approved?: boolean }
 
 export class NamiClient {
   baseUrl: string;
@@ -39,6 +51,25 @@ export class NamiClient {
   async scheduler(): Promise<Record<string, unknown>> { return this.fetchJson("/scheduler"); }
   async workerHealth(name: string): Promise<WorkerHealthResponse> { return this.fetchJson(`/workers/${name}/health`); }
   async rateLimit(name: string): Promise<RateLimitResponse> { return this.fetchJson(`/workers/${name}/rate-limit`); }
+  async runtimeHealth(): Promise<RuntimeHealthResponse> { return this.fetchJson<RuntimeHealthResponse>("/runtime/health"); }
+  async runtimeTools(): Promise<RuntimeToolsResponse> { return this.fetchJson<RuntimeToolsResponse>("/runtime/tools"); }
+  async runtimeJobs(): Promise<RuntimeJobsResponse> { return this.fetchJson<RuntimeJobsResponse>("/runtime/jobs"); }
+  async runtimeMcpServers(): Promise<RuntimeMcpServersResponse> { return this.fetchJson<RuntimeMcpServersResponse>("/runtime/mcp/servers"); }
+  async runtimeMcpTools(): Promise<RuntimeMcpToolsResponse> { return this.fetchJson<RuntimeMcpToolsResponse>("/runtime/mcp/tools"); }
+  async runtimeJob(jobId: string): Promise<RuntimeJob> { return this.fetchJson<RuntimeJob>(`/runtime/jobs/${jobId}`); }
+  async runtimeToolInvoke(request: RuntimeToolInvokeRequest): Promise<RuntimeToolInvokeResponse> {
+    return this.fetchJson<RuntimeToolInvokeResponse>("/runtime/tools/invoke", {
+      method: "POST",
+      body: JSON.stringify({ ...request, payload: request.payload || {}, approved: request.approved || false }),
+    });
+  }
+  async runtimeMcpToolInvoke(request: RuntimeMcpToolInvokeRequest): Promise<RuntimeToolInvokeResponse> {
+    return this.fetchJson<RuntimeToolInvokeResponse>("/runtime/mcp/tools/invoke", {
+      method: "POST",
+      body: JSON.stringify({ ...request, payload: request.payload || {}, approved: request.approved || false }),
+    });
+  }
+  runtimeEvents(): EventSource { return new EventSource(`${this.baseUrl}/runtime/events`); }
 
   async dispatch(worker: string, action: string, payload?: Record<string, unknown>): Promise<DispatchResponse> {
     return this.fetchJson<DispatchResponse>("/dispatch", {

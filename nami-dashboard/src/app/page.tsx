@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
   Activity, Cpu, Clock, Moon, Sun, RefreshCw, Zap, Send,
-  BarChart3, Shield, Database, Heart, Layers, Radio, AlertCircle, BookOpen, Gauge, Network, CheckCircle, XCircle,
+  BarChart3, Shield, Database, Heart, Layers, Radio, AlertCircle, BookOpen, Gauge, Network, CheckCircle, XCircle, Wrench, Briefcase,
 } from "lucide-react";
 import {
   Chart as ChartJS,
@@ -24,6 +24,12 @@ interface WorkerHealth { worker: string; healthy: boolean | null; latency_ms: nu
 interface BatchResult { worker: string; action: string; ok: boolean; latency_ms: number; error?: string }
 interface SSEEvent { event: string; data: Record<string, unknown> }
 interface RateLimitInfo { worker: string; max_requests: number; window_seconds: number; active: boolean; current_hits: number }
+interface RuntimeHealth { status: string; service: string; tools: number; jobs: number; timestamp: string }
+interface RuntimeTool { name: string; description: string; permission_level: string; timeout_seconds: number; audit_category: string; read_only: boolean; worker: string | null; action: string | null }
+interface RuntimeJob { id: string; status: string; requested_action: string; updated_at: string; error?: string | null }
+interface RuntimeStreamEvent { type: string; timestamp: string; job_id?: string | null; data?: Record<string, unknown> }
+interface RuntimeMcpServer { name: string; transport: string; command?: string | null; args: string[]; url?: string | null; enabled: boolean; tool_namespace: string; permission_level: string; status: string; status_detail: string }
+interface RuntimeMcpToolServer { server: string; tool_namespace: string; enabled: boolean; status: string; status_detail: string; tools: RuntimeTool[]; tool_count: number }
 
 async function apiFetch<T>(path: string): Promise<T> {
   const r = await fetch(`${API_BASE}${path}`);
@@ -474,6 +480,142 @@ function QuickActionsPanel({ apiKey }: { apiKey: string }) {
     </div>
   );
 }
+function RuntimePanel({ health, tools, jobs, mcpServers, apiKey, onRefresh }: { health: RuntimeHealth | null; tools: RuntimeTool[]; jobs: RuntimeJob[]; mcpServers: RuntimeMcpToolServer[]; apiKey: string; onRefresh: () => void }) {
+  const readOnly = tools.filter(tool => tool.read_only).length;
+  const latestJobs = jobs.slice(0, 5);
+  const enabledMcpServers = mcpServers.filter(server => server.enabled).length;
+  const runtimeTools = [...tools, ...mcpServers.flatMap(server => server.tools || [])];
+  const mcpToolCount = mcpServers.reduce((sum, server) => sum + server.tool_count, 0);
+  const [selectedTool, setSelectedTool] = useState("");
+  const [payload, setPayload] = useState("{}");
+  const [approvedTool, setApprovedTool] = useState("");
+  const [result, setResult] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [runtimeEvents, setRuntimeEvents] = useState<RuntimeStreamEvent[]>([]);
+  const activeTool = runtimeTools.find(tool => tool.name === selectedTool) || null;
+  const activeIsMcp = activeTool?.worker === "mcp";
+  const needsApproval = activeTool?.permission_level === "mutating";
+  const denied = activeTool?.permission_level === "dangerous" || activeTool?.permission_level === "admin_only";
+
+  useEffect(() => {
+    const es = new EventSource(`${API_BASE}/runtime/events`);
+    const pushEvent = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data) as RuntimeStreamEvent;
+        setRuntimeEvents(prev => [data, ...prev].slice(0, 8));
+        if (data.type === "job.completed" || data.type === "job.failed") onRefresh();
+      } catch { /* skip malformed runtime event */ }
+    };
+    es.addEventListener("runtime.ready", pushEvent);
+    es.addEventListener("tool.started", pushEvent);
+    es.addEventListener("job.completed", pushEvent);
+    es.addEventListener("job.failed", pushEvent);
+    return () => es.close();
+  }, [onRefresh]);
+
+  const invokeTool = async () => {
+    if (!activeTool?.worker || !activeTool.action || denied) return;
+    if (needsApproval && approvedTool !== activeTool.name) {
+      setApprovedTool(activeTool.name);
+      setResult("Approval staged. Review the tool and run again to confirm.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+      const response = await fetch(`${API_BASE}${activeIsMcp ? "/runtime/mcp/tools/invoke" : "/runtime/tools/invoke"}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(activeIsMcp ? { tool: activeTool.name, payload: JSON.parse(payload), approved: needsApproval } : { worker: activeTool.worker, action: activeTool.action, payload: JSON.parse(payload), approved: needsApproval }),
+      });
+      const data = await response.json().catch(() => ({}));
+      setResult(JSON.stringify(data, null, 2));
+      if (response.ok) {
+        setApprovedTool("");
+        onRefresh();
+      }
+    } catch (e) {
+      setResult(`Error: ${e}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="card lg:col-span-2">
+      <h2 className="card-title">
+        <Wrench size={16} /> Runtime API v2
+      </h2>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4 text-xs">
+        <div className="runtime-stat"><span className="text-dim">Status</span><strong>{health?.status ?? "unknown"}</strong></div>
+        <div className="runtime-stat"><span className="text-dim">Tools</span><strong>{tools.length}</strong></div>
+        <div className="runtime-stat"><span className="text-dim">Read-only</span><strong>{readOnly}</strong></div>
+        <div className="runtime-stat"><span className="text-dim">Jobs</span><strong>{jobs.length}</strong></div>
+        <div className="runtime-stat"><span className="text-dim">MCP</span><strong>{enabledMcpServers}/{mcpServers.length}</strong></div>
+        <div className="runtime-stat"><span className="text-dim">MCP tools</span><strong>{mcpToolCount}</strong></div>
+      </div>
+      <div className="grid md:grid-cols-2 gap-4">
+        <div>
+          <div className="flex items-center gap-2 text-xs text-gold-dim mb-2"><Wrench size={13} /> Registered tools</div>
+          <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
+            {runtimeTools.slice(0, 12).map(tool => (
+              <button key={tool.name} type="button" onClick={() => { setSelectedTool(tool.name); setApprovedTool(""); }} className={`runtime-row runtime-tool-row ${selectedTool === tool.name ? "runtime-row-active" : ""}`}>
+                <span className="truncate">{tool.name}</span>
+                <span className={tool.read_only ? "text-green-400" : tool.permission_level === "dangerous" ? "text-red-400" : "text-orange-400"}>{tool.permission_level}</span>
+              </button>
+            ))}
+            {runtimeTools.length === 0 && <div className="text-xs text-dim">No tools registered</div>}
+          </div>
+          <div className="mt-3 flex flex-col gap-2">
+            <textarea value={payload} onChange={e => setPayload(e.target.value)} rows={2} className="input-dark font-mono text-xs" aria-label="Runtime tool payload JSON" />
+            <button onClick={invokeTool} disabled={loading || !activeTool || denied || (needsApproval && !apiKey)} className={needsApproval && approvedTool !== activeTool?.name ? "btn-gold-dim" : "btn-gold"}>
+              {loading ? "Running..." : denied ? "Denied by policy" : needsApproval && approvedTool !== activeTool?.name ? "Approve tool" : "Run tool"}
+            </button>
+            {needsApproval && !apiKey && <div className="text-xs text-orange-400">API key required for mutating tools.</div>}
+            {result && <pre className="pre-dark">{result}</pre>}
+          </div>
+        </div>
+        <div>
+          <div className="flex items-center gap-2 text-xs text-gold-dim mb-2"><Briefcase size={13} /> Recent jobs</div>
+          <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
+            {latestJobs.map(job => (
+              <div key={job.id} className="runtime-row">
+                <span className="truncate">{job.requested_action}</span>
+                <span className={job.status === "completed" ? "text-green-400" : job.status === "failed" ? "text-red-400" : "text-orange-400"}>{job.status}</span>
+              </div>
+            ))}
+            {latestJobs.length === 0 && <div className="text-xs text-dim">No runtime jobs yet</div>}
+          </div>
+          <div className="mt-3">
+            <div className="flex items-center gap-2 text-xs text-gold-dim mb-2"><Network size={13} /> MCP servers</div>
+            <div className="flex flex-col gap-1 max-h-32 overflow-y-auto">
+              {mcpServers.map(server => (
+                <div key={server.server} className="runtime-row" title={server.status_detail}>
+                  <span className="truncate">{server.tool_namespace}</span>
+                  <span className={server.enabled ? "text-green-400" : "text-dim"}>{server.status}</span>
+                </div>
+              ))}
+              {mcpServers.length === 0 && <div className="text-xs text-dim">No MCP servers configured</div>}
+            </div>
+          </div>
+          <div className="mt-3">
+            <div className="flex items-center gap-2 text-xs text-gold-dim mb-2"><Radio size={13} /> Runtime events</div>
+            <div className="flex flex-col gap-1 max-h-32 overflow-y-auto">
+              {runtimeEvents.map((event, index) => (
+                <div key={`${event.timestamp}-${index}`} className="runtime-event-row">
+                  <span className="truncate">{event.type}</span>
+                  <span className="text-dim truncate">{event.job_id ?? "runtime"}</span>
+                </div>
+              ))}
+              {runtimeEvents.length === 0 && <div className="text-xs text-dim">Waiting for runtime events...</div>}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 function AlertToast({ message, onClose }: { message: string; onClose: () => void }) {
   if (!message) return null;
   return (
@@ -490,6 +632,10 @@ export default function Dashboard() {
   const [workers, setWorkers] = useState<WorkerInfo[]>([]);
   const [metrics, setMetrics] = useState<Record<string, number>>({});
   const [audit, setAudit] = useState<AuditEntry[]>([]);
+  const [runtimeHealth, setRuntimeHealth] = useState<RuntimeHealth | null>(null);
+  const [runtimeTools, setRuntimeTools] = useState<RuntimeTool[]>([]);
+  const [runtimeJobs, setRuntimeJobs] = useState<RuntimeJob[]>([]);
+  const [runtimeMcpServers, setRuntimeMcpServers] = useState<RuntimeMcpToolServer[]>([]);
   const [wsState, setWsState] = useState<"on" | "off" | "wait">("wait");
   const [lastUpdate, setLastUpdate] = useState("--");
   const [healthOk, setHealthOk] = useState(false);
@@ -503,10 +649,18 @@ export default function Dashboard() {
       const w = await apiFetch<{ workers: WorkerInfo[] }>("/workers");
       const m = await apiFetch<Record<string, number>>("/metrics");
       const a = await apiFetch<{ entries: AuditEntry[] }>("/audit");
+      const rh = await apiFetch<RuntimeHealth>("/runtime/health");
+      const rt = await apiFetch<{ tools: RuntimeTool[] }>("/runtime/tools");
+      const rj = await apiFetch<{ jobs: RuntimeJob[] }>("/runtime/jobs");
+      const rms = await apiFetch<{ servers: RuntimeMcpToolServer[] }>("/runtime/mcp/tools");
       setHealthOk(h.status === "ok");
       setWorkers(w.workers);
       setMetrics(m);
       setAudit(a.entries || []);
+      setRuntimeHealth(rh);
+      setRuntimeTools(rt.tools || []);
+      setRuntimeJobs(rj.jobs || []);
+      setRuntimeMcpServers(rms.servers || []);
       setLastUpdate(new Date().toLocaleTimeString());
     } catch { setLastUpdate("error"); }
   }, []);
@@ -584,6 +738,7 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 px-6 pb-6">
         <WorkerTopologyCanvas workers={workers} healthOk={healthOk} wsState={wsState} />
+        <RuntimePanel health={runtimeHealth} tools={runtimeTools} jobs={runtimeJobs} mcpServers={runtimeMcpServers} apiKey={apiKey} onRefresh={refresh} />
         <WorkerHealthCards workers={workers} onAlert={setAlert} />
         <WorkerBarChart workers={workers} />
         <LatencyChart entries={audit} />

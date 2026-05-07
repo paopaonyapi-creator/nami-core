@@ -1,0 +1,215 @@
+﻿"""Minimal MCP client support for Nami Core."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+from dataclasses import dataclass, field
+from typing import Any
+
+from nami_core.mcp_config import McpConfig, McpServerConfig
+from nami_core.runtime_v2 import PolicyCategory, ToolMetadata
+
+
+class McpClientError(RuntimeError):
+    pass
+
+
+@dataclass
+class McpTool:
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    server: str
+    namespaced_name: str
+    permission_level: PolicyCategory
+    read_only: bool
+
+    def to_metadata(self) -> ToolMetadata:
+        return ToolMetadata(
+            name=self.namespaced_name,
+            description=self.description,
+            input_schema=self.input_schema,
+            output_schema={"type": "object", "additionalProperties": True},
+            permission_level=self.permission_level,
+            timeout_seconds=30,
+            audit_category="mcp_tool_call",
+            read_only=self.read_only,
+            worker="mcp",
+            action=self.namespaced_name,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        data = self.to_metadata().to_dict()
+        data.update({"server": self.server, "mcp_name": self.name})
+        return data
+
+
+@dataclass
+class McpServerRuntime:
+    server: McpServerConfig
+    status: str = "configured"
+    status_detail: str = "configured; connection not opened"
+    tools: list[McpTool] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "server": self.server.name,
+            "tool_namespace": self.server.to_tool_namespace(),
+            "enabled": self.server.enabled,
+            "status": self.status,
+            "status_detail": self.status_detail,
+            "tools": [tool.to_dict() for tool in self.tools],
+            "tool_count": len(self.tools),
+        }
+
+
+class StdioMcpSession:
+    def __init__(self, server: McpServerConfig) -> None:
+        self.server = server
+        self._process: asyncio.subprocess.Process | None = None
+        self._next_id = 1
+        self._lock = asyncio.Lock()
+
+    async def start(self) -> None:
+        if self._process is not None:
+            return
+        if not self.server.command:
+            raise McpClientError(f"stdio MCP server requires command: {self.server.name}")
+        env = os.environ.copy()
+        env.update(self.server.env)
+        self._process = await asyncio.create_subprocess_exec(
+            self.server.command,
+            *self.server.args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        await self.request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "nami-core", "version": "0.13.0"}})
+        await self.notify("notifications/initialized", {})
+
+    async def close(self) -> None:
+        if self._process is None:
+            return
+        process = self._process
+        self._process = None
+        if process.returncode is None:
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=2)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> Any:
+        if self._process is None or self._process.stdin is None or self._process.stdout is None:
+            raise McpClientError(f"MCP server is not connected: {self.server.name}")
+        async with self._lock:
+            request_id = self._next_id
+            self._next_id += 1
+            payload = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}}
+            self._process.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+            await self._process.stdin.drain()
+            while True:
+                line = await asyncio.wait_for(self._process.stdout.readline(), timeout=10)
+                if not line:
+                    raise McpClientError(f"MCP server closed stdout: {self.server.name}")
+                response = json.loads(line.decode("utf-8"))
+                if response.get("id") != request_id:
+                    continue
+                if "error" in response:
+                    raise McpClientError(str(response["error"]))
+                return response.get("result", {})
+
+    async def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+        if self._process is None or self._process.stdin is None:
+            raise McpClientError(f"MCP server is not connected: {self.server.name}")
+        payload = {"jsonrpc": "2.0", "method": method, "params": params or {}}
+        self._process.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+        await self._process.stdin.drain()
+
+    async def list_tools(self) -> list[dict[str, Any]]:
+        result = await self.request("tools/list")
+        tools = result.get("tools", [])
+        return tools if isinstance(tools, list) else []
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        return await self.request("tools/call", {"name": name, "arguments": arguments})
+
+
+class McpClientManager:
+    def __init__(self, config: McpConfig) -> None:
+        self.config = config
+        self._sessions: dict[str, StdioMcpSession] = {}
+        self._servers: dict[str, McpServerRuntime] = {server.name: McpServerRuntime(server=server, status=server.status(), status_detail=server.status_detail()) for server in config.servers}
+        self._tools: dict[str, McpTool] = {}
+
+    async def close(self) -> None:
+        await asyncio.gather(*(session.close() for session in self._sessions.values()), return_exceptions=True)
+        self._sessions.clear()
+
+    async def discover(self) -> None:
+        for server in self.config.servers:
+            runtime = self._servers[server.name]
+            runtime.tools = []
+            if not server.enabled:
+                runtime.status = "disabled"
+                runtime.status_detail = "server disabled in config"
+                continue
+            if server.transport != "stdio":
+                runtime.status = "unsupported"
+                runtime.status_detail = f"{server.transport} MCP transport is configured but live client support is not implemented"
+                continue
+            try:
+                session = self._sessions.get(server.name)
+                if session is None:
+                    session = StdioMcpSession(server)
+                    self._sessions[server.name] = session
+                await session.start()
+                discovered = []
+                for item in await session.list_tools():
+                    name = str(item.get("name", ""))
+                    if not name:
+                        continue
+                    permission_level = server.permission_level
+                    read_only = permission_level in {"read_only", "protected_read"}
+                    tool = McpTool(
+                        name=name,
+                        description=str(item.get("description") or f"MCP tool '{name}' from server '{server.name}'."),
+                        input_schema=item.get("inputSchema") if isinstance(item.get("inputSchema"), dict) else {"type": "object", "additionalProperties": True},
+                        server=server.name,
+                        namespaced_name=f"{server.to_tool_namespace()}.{name}",
+                        permission_level=permission_level,  # type: ignore[arg-type]
+                        read_only=read_only,
+                    )
+                    self._tools[tool.namespaced_name] = tool
+                    discovered.append(tool)
+                runtime.tools = discovered
+                runtime.status = "connected"
+                runtime.status_detail = f"connected; {len(discovered)} tools discovered"
+            except Exception as exc:
+                runtime.status = "error"
+                runtime.status_detail = str(exc)
+
+    def servers(self) -> list[McpServerRuntime]:
+        return [self._servers[server.name] for server in self.config.servers]
+
+    def tools(self) -> list[McpTool]:
+        return sorted(self._tools.values(), key=lambda tool: tool.namespaced_name)
+
+    def get_tool(self, namespaced_name: str) -> McpTool | None:
+        return self._tools.get(namespaced_name)
+
+    async def call_tool(self, namespaced_name: str, arguments: dict[str, Any]) -> Any:
+        tool = self.get_tool(namespaced_name)
+        if tool is None:
+            await self.discover()
+            tool = self.get_tool(namespaced_name)
+        if tool is None:
+            raise McpClientError(f"MCP tool not registered: {namespaced_name}")
+        session = self._sessions.get(tool.server)
+        if session is None:
+            raise McpClientError(f"MCP server is not connected: {tool.server}")
+        return await session.call_tool(tool.name, arguments)

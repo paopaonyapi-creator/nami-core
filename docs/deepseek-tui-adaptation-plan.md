@@ -277,6 +277,32 @@ Start with Phase 1 and Phase 2 together in a narrow form:
 
 This gives Nami a clean foundation without disrupting current production behavior.
 
+## Implementation Status
+
+Completed narrow Runtime API v2 foundation on 2026-05-06:
+
+- Added `nami_core.runtime_v2` primitives for runtime events, tool metadata, execution policy, tool registry, and runtime jobs.
+- Added Runtime API v2 endpoints under `/runtime/*` for health, tool listing, tool invocation, jobs, and events.
+- Registered existing Hermes worker actions as runtime tools with policy classification for read-only, protected-read, mutating, and dangerous actions.
+- Persisted runtime jobs in a narrow JSON-backed store when `NAMI_RUNTIME_JOBS_FILE` is configured.
+- Added server-side approval enforcement for mutating runtime tool invokes and denial for dangerous/admin tools.
+- Added buffered runtime job events through `/runtime/events` and WebSocket `runtime.event` broadcasts.
+- Added dashboard Runtime API v2 panel with runtime status, registered tools, staged mutating-tool approval, recent jobs, and live event feed.
+- Added TypeScript SDK helpers for Runtime API v2.
+- Added YAML-backed MCP config loading and validation for `stdio`, `sse`, and `websocket` server definitions, plus `config/mcp_servers.example.yaml`.
+- Added `/runtime/mcp/servers` discovery for configured MCP servers with safe config-level status reporting.
+- Added `nami_core.mcp_client` with live `stdio` MCP JSON-RPC sessions for `initialize`, `tools/list`, and `tools/call`.
+- Replaced the `/runtime/mcp/tools` skeleton with live `stdio` discovery, per-server connection status, discovered tool metadata, and unsupported reporting for remote transports.
+- Added `/runtime/mcp/tools/invoke` for policy-gated MCP tool calls with runtime jobs, audit entries, buffered events, and WebSocket `runtime.event` broadcasts.
+- Added dashboard and TypeScript SDK support for discovered MCP tool counts, server status, tool selection, and MCP invocation.
+- Added regression coverage for Runtime API v2, MCP config loading, MCP `stdio` discovery, MCP invocation, and protected MCP tool policy enforcement.
+
+Remaining next work:
+
+- Add live `sse` and `websocket` MCP transports.
+- Add richer MCP server health checks, reconnect/backoff behavior, and dashboard lifecycle controls.
+- Expose discovered MCP tools through the central Nami runtime registry if a single registry surface is required.
+
 ## Notes
 
 `DeepSeek-TUI` is MIT licensed, so code reuse is legally possible if attribution is preserved. Still, the preferred path is to reimplement the relevant architecture in Nami's existing stack first.
