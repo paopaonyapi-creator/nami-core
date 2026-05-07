@@ -109,6 +109,13 @@ quality:
 
 Secrets are loaded from `/etc/nami-harness/` (root-only 700/600).
 
+Runtime diagnostics can be controlled with `NAMI_RUNTIME_DIAGNOSTIC_CHECKS`:
+
+- `runtime_pytest,dashboard_build` — default; runs Runtime API pytest and dashboard production build when project files are present.
+- `runtime_pytest` — Python Runtime API verification only.
+- `dashboard_build` — dashboard production build only.
+- `none` — disables automatic diagnostics after approved mutating runtime tools.
+
 ## Test Results
 
 ```
