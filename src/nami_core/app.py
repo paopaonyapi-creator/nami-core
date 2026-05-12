@@ -344,6 +344,42 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         except McpClientError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
 
+    @app.post("/runtime/mcp/reload")
+    async def runtime_mcp_reload(request: Request, authorization: str = Header(default="")):
+        Metrics.request_count += 1
+        authenticated = False
+        if app.state.api_key:
+            key = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+            authenticated = key == app.state.api_key
+        if app.state.api_key and not authenticated:
+            raise HTTPException(status_code=401, detail="api key required")
+        config_file = os.environ.get("NAMI_MCP_CONFIG_FILE")
+        if not config_file:
+            raise HTTPException(status_code=400, detail="NAMI_MCP_CONFIG_FILE not set")
+        try:
+            new_config = load_mcp_config(config_file)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"failed to load config: {exc}")
+        old_client = app.state.mcp_client
+        try:
+            await old_client.close()
+        except Exception as exc:
+            logger.warning("error closing previous MCP client: %s", exc)
+        app.state.mcp_config = new_config
+        app.state.mcp_client = McpClientManager(new_config)
+        try:
+            await app.state.mcp_client.discover()
+        except Exception as exc:
+            logger.warning("MCP discover after reload failed: %s", exc)
+        servers = [server.to_dict() for server in app.state.mcp_client.servers()]
+        return {
+            "ok": True,
+            "config_file": config_file,
+            "server_count": len(new_config.servers),
+            "enabled_count": len(new_config.enabled_servers()),
+            "servers": servers,
+        }
+
     @app.get("/runtime/mcp/tools")
     async def runtime_mcp_tools(request: Request):
         Metrics.request_count += 1

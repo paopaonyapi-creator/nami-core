@@ -21,6 +21,15 @@ from typing import Any
 
 import subprocess
 
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+    _HAS_PSYCOPG = True
+except ImportError:  # pragma: no cover - environments without psycopg fall back to psql shell-out
+    psycopg = None
+    dict_row = None
+    _HAS_PSYCOPG = False
+
 from .utils import ai_chat_completion, telegram_send
 
 logger = logging.getLogger(__name__)
@@ -46,14 +55,77 @@ def _read_secret(path: str, default: str = "") -> str:
         return default
 
 
-def _lao_db_query(sql: str) -> list[dict[str, Any]] | None:
-    """Run a psql query against LaoPatana DB and return rows as list of dicts."""
+def _lao_db_connect():
+    """Open a psycopg connection to LaoPatana DB. Returns None on failure.
+
+    Tries Unix-socket peer auth first (works when running as `postgres`
+    system user — matches the `local all postgres peer` rule in pg_hba.conf).
+    Falls back to TCP with password from `LAO_DB_PASS_FILE` for environments
+    where peer auth is not available.
+    """
+    if not _HAS_PSYCOPG:
+        return None
+    # Attempt 1: Unix socket peer auth (no host).
+    try:
+        return psycopg.connect(
+            user=LAO_DB_USER,
+            dbname=LAO_DB_NAME,
+            connect_timeout=5,
+            row_factory=dict_row,
+        )
+    except psycopg.Error as e:
+        logger.info("psycopg socket connect failed (will try TCP): %s", e)
+
+    # Attempt 2: TCP with password from secret file.
+    pw = _read_secret(LAO_DB_PASS_FILE)
+    if not pw:
+        logger.warning("No DB password found at %s", LAO_DB_PASS_FILE)
+        return None
+    try:
+        return psycopg.connect(
+            host=LAO_DB_HOST,
+            user=LAO_DB_USER,
+            password=pw,
+            dbname=LAO_DB_NAME,
+            connect_timeout=5,
+            row_factory=dict_row,
+        )
+    except psycopg.Error as e:
+        logger.warning("psycopg TCP connect failed: %s", e)
+        return None
+
+
+def _lao_db_query(sql: str, params: tuple | list | None = None) -> list[dict[str, Any]] | None:
+    """Run a query against LaoPatana DB and return rows as list of dicts.
+
+    Prefers psycopg with parameterised queries; falls back to psql shell-out
+    only when psycopg is unavailable AND no params are provided (legacy paths).
+    """
+    if _HAS_PSYCOPG:
+        conn = _lao_db_connect()
+        if conn is None:
+            return None
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, params or ())
+                if cur.description is None:
+                    return []
+                return list(cur.fetchall())
+        except psycopg.Error as e:
+            logger.warning("DB query failed: %s", e)
+            return None
+        finally:
+            conn.close()
+
+    # Legacy psql fallback (no parameter support)
+    if params:
+        logger.error("psycopg unavailable; cannot run parameterised query safely")
+        return None
     pw = _read_secret(LAO_DB_PASS_FILE)
     if not pw:
         logger.warning("No DB password found at %s", LAO_DB_PASS_FILE)
         return None
     env = {**os.environ, "PGPASSWORD": pw}
-    # Use -P footer=off and parse header row for column names
     cmd = ["psql", "-h", LAO_DB_HOST, "-U", LAO_DB_USER, "-d", LAO_DB_NAME,
            "-A", "-F", "|", "-P", "footer=off", "-c", sql]
     try:
@@ -64,7 +136,6 @@ def _lao_db_query(sql: str) -> list[dict[str, Any]] | None:
         lines = [l for l in r.stdout.strip().split("\n") if l]
         if not lines:
             return []
-        # First line is column headers, rest are data rows
         cols = [c.strip() for c in lines[0].split("|")]
         result = []
         for line in lines[1:]:
@@ -95,12 +166,15 @@ def fetch_lao_predictions() -> dict[str, Any]:
     pred_id = rows[0].get("id", "")
     engine = rows[0].get("engine_ver", "unknown")
 
-    items = _lao_db_query(f"""
+    items = _lao_db_query(
+        """
         SELECT bet_type, number, rank, score, category
         FROM prediction_items
-        WHERE prediction_id = '{pred_id}' AND is_rejected = false
+        WHERE prediction_id = %s AND is_rejected = false
         ORDER BY bet_type, rank
-    """)
+        """,
+        (pred_id,),
+    )
     if not items:
         return {"error": "no prediction items", "engine": engine}
 
@@ -130,12 +204,15 @@ def fetch_lao_predictions() -> dict[str, Any]:
 
 def fetch_lao_draws(limit: int = 5) -> list[dict[str, Any]]:
     """Fetch latest Lao draw results from LaoPatana DB."""
-    rows = _lao_db_query(f"""
+    rows = _lao_db_query(
+        """
         SELECT draw_date, lao_last4, lao_last2, lao_last3, status
         FROM draws
         WHERE status = 'drawn' AND lao_last2 IS NOT NULL
-        ORDER BY draw_date DESC LIMIT {limit}
-    """)
+        ORDER BY draw_date DESC LIMIT %s
+        """,
+        (limit,),
+    )
     return rows or []
 
 REGION_CONFIG = {
@@ -414,11 +491,322 @@ def vip(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def latest_prediction(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return the latest prediction in tile-friendly shape.
+
+    Payload keys:
+      - region: 'lao' (DB-backed locked picks) or 'hanoi' (live VPS API top picks)
+
+    Returns:
+      - lao   → { source: 'laopatana_db', data: { engine, target_date, 1d, 2d_main, 2d_secondary, 3d, latest_draw }, timestamp }
+      - hanoi → { source: 'hanoi_api',    data: { engine, target_date, draw_types: {special, normal, vip}, latest_results }, timestamp }
+    """
+    region = payload.get("region", "lao")
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    if region == "hanoi":
+        preds = fetch_predictions(region="hanoi")
+        draw_types: dict[str, Any] = {}
+        latest_results: dict[str, str | None] = {}
+        any_ok = False
+        for dt, raw in (preds or {}).items():
+            if not isinstance(raw, dict) or "error" in raw:
+                draw_types[dt] = {"error": (raw or {}).get("error", "unavailable") if isinstance(raw, dict) else "unavailable"}
+                latest_results[dt] = None
+                continue
+            top = (raw.get("predictions") or [])[:5]
+            draw_types[dt] = {
+                "top": [
+                    {
+                        "number": str(p.get("number", "")),
+                        "confidence": round(float(p.get("confidence", 0.0)), 1),
+                        "label": p.get("label"),
+                    }
+                    for p in top
+                ],
+                "generated_at": raw.get("generatedAt"),
+                "record_count": raw.get("recordCount"),
+            }
+            latest_results[dt] = raw.get("latestResult")
+            any_ok = True
+        if not any_ok:
+            return {
+                "source": "hanoi_api",
+                "data": None,
+                "timestamp": now_iso,
+                "error": "Hanoi predict API unavailable",
+            }
+        return {
+            "source": "hanoi_api",
+            "data": {
+                "engine": "hanoi-stats",
+                "target_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "draw_types": draw_types,
+                "latest_results": latest_results,
+            },
+            "timestamp": now_iso,
+        }
+
+    if region != "lao":
+        return {
+            "source": "unsupported",
+            "data": None,
+            "timestamp": now_iso,
+            "note": f"region {region} ไม่รองรับ (มีแค่ lao | hanoi)",
+        }
+
+    preds = fetch_lao_predictions()
+    if "error" in preds:
+        return {
+            "source": "laopatana_db",
+            "data": None,
+            "timestamp": now_iso,
+            "error": preds["error"],
+        }
+
+    draws = fetch_lao_draws(1)
+    return {
+        "source": "laopatana_db",
+        "data": {**preds, "latest_draw": draws[0] if draws else None},
+        "timestamp": now_iso,
+    }
+
+
+def accuracy_stats(payload: dict[str, Any]) -> dict[str, Any]:
+    """Compute hit-rate per bet_type over the last N completed draws.
+
+    A 1d "hit" = predicted digit appears in draws.lao_last2.
+    A 2d "hit" = predicted 2-digit number == draws.lao_last2.
+    A 3d "hit" = predicted 3-digit number == draws.lao_last3.
+
+    Payload keys:
+      - region: 'lao' (default)
+      - last_n: window size (default 30)
+
+    Returns: { hit_rate, hits, total, by_bet_type:{1d,2d,3d}, streak, last_hit_date }
+    """
+    region = payload.get("region", "lao")
+    last_n = int(payload.get("last_n", 30))
+
+    if region != "lao":
+        return {"error": f"region {region} ไม่รองรับ accuracy_stats"}
+
+    rows = _lao_db_query(
+        """
+        SELECT p.id, p.target_draw_date, d.lao_last2, d.lao_last3
+        FROM predictions p
+        JOIN draws d ON d.draw_date = p.target_draw_date
+        WHERE p.status = 'locked' AND d.status = 'drawn'
+              AND d.lao_last2 IS NOT NULL
+        ORDER BY p.target_draw_date DESC
+        LIMIT %s
+        """,
+        (last_n,),
+    )
+    if rows is None:
+        return {"error": "DB unavailable"}
+    if not rows:
+        return {"hit_rate": 0.0, "hits": 0, "total": 0, "by_bet_type": {},
+                "streak": 0, "last_hit_date": None, "window": last_n}
+
+    by_bt = {"1d": {"hits": 0, "total": 0}, "2d": {"hits": 0, "total": 0},
+             "3d": {"hits": 0, "total": 0}}
+    per_draw_hits: list[tuple[str, bool]] = []  # (date, any_hit)
+    last_hit_date: str | None = None
+
+    for row in rows:
+        pid = row.get("id", "")
+        last2 = str(row.get("lao_last2") or "").strip()
+        last3 = str(row.get("lao_last3") or "").strip()
+        date_str = str(row.get("target_draw_date") or "")
+        items = _lao_db_query(
+            """
+            SELECT bet_type, number, category
+            FROM prediction_items
+            WHERE prediction_id = %s AND is_rejected = false
+            """,
+            (pid,),
+        ) or []
+        any_hit = False
+        for it in items:
+            bt = it.get("bet_type", "")
+            num = str(it.get("number") or "").strip()
+            if bt not in by_bt:
+                continue
+            by_bt[bt]["total"] += 1
+            hit = False
+            if bt == "1d" and num and last2 and num in last2:
+                hit = True
+            elif bt == "2d" and num and last2 and num == last2:
+                hit = True
+            elif bt == "3d" and num and last3 and num == last3:
+                hit = True
+            if hit:
+                by_bt[bt]["hits"] += 1
+                any_hit = True
+        per_draw_hits.append((date_str, any_hit))
+        if any_hit and last_hit_date is None:
+            last_hit_date = date_str
+
+    total_hits = sum(v["hits"] for v in by_bt.values())
+    total_items = sum(v["total"] for v in by_bt.values())
+    rate = (total_hits / total_items) if total_items else 0.0
+
+    streak = 0
+    for _, hit in per_draw_hits:
+        if hit:
+            streak += 1
+        else:
+            break
+
+    return {
+        "region": region,
+        "window": last_n,
+        "hit_rate": round(rate, 4),
+        "hits": total_hits,
+        "total": total_items,
+        "by_bet_type": {k: {"hits": v["hits"], "total": v["total"],
+                            "rate": round(v["hits"] / v["total"], 4) if v["total"] else 0.0}
+                        for k, v in by_bt.items()},
+        "streak": streak,
+        "last_hit_date": last_hit_date,
+    }
+
+
+def history(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return last N predictions paired with the actual draw + per-row hit/miss flag.
+
+    Payload keys:
+      - region: 'lao' (default)
+      - limit: 20
+
+    Returns: { region, items: [{date, picks:{1d,2d_main,2d_secondary,3d}, draw:{lao_last2,lao_last3,lao_last4}, any_hit:bool}] }
+    """
+    region = payload.get("region", "lao")
+    limit = int(payload.get("limit", 20))
+
+    if region != "lao":
+        return {"error": f"region {region} ไม่รองรับ history"}
+
+    rows = _lao_db_query(
+        """
+        SELECT p.id, p.target_draw_date,
+               d.lao_last2, d.lao_last3, d.lao_last4
+        FROM predictions p
+        LEFT JOIN draws d ON d.draw_date = p.target_draw_date
+        WHERE p.status = 'locked'
+        ORDER BY p.target_draw_date DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    if rows is None:
+        return {"error": "DB unavailable"}
+
+    items = []
+    for row in rows:
+        pid = row.get("id", "")
+        last2 = str(row.get("lao_last2") or "").strip()
+        last3 = str(row.get("lao_last3") or "").strip()
+        last4 = str(row.get("lao_last4") or "").strip()
+        ipicks = _lao_db_query(
+            """
+            SELECT bet_type, number, category, rank
+            FROM prediction_items
+            WHERE prediction_id = %s AND is_rejected = false
+            ORDER BY bet_type, rank
+            """,
+            (pid,),
+        ) or []
+        picks = {"1d": [], "2d_main": [], "2d_secondary": [], "3d": []}
+        for it in ipicks:
+            bt = it.get("bet_type", "")
+            cat = it.get("category", "")
+            num = str(it.get("number") or "")
+            if bt == "1d":
+                picks["1d"].append(num)
+            elif bt == "2d" and cat == "main":
+                picks["2d_main"].append(num)
+            elif bt == "2d" and cat == "secondary":
+                picks["2d_secondary"].append(num)
+            elif bt == "3d":
+                picks["3d"].append(num)
+
+        any_hit = False
+        if last2:
+            if any(d and d in last2 for d in picks["1d"]):
+                any_hit = True
+            if last2 in picks["2d_main"] or last2 in picks["2d_secondary"]:
+                any_hit = True
+        if last3 and last3 in picks["3d"]:
+            any_hit = True
+
+        items.append({
+            "date": str(row.get("target_draw_date") or ""),
+            "picks": picks,
+            "draw": {"lao_last2": last2, "lao_last3": last3, "lao_last4": last4} if last2 else None,
+            "any_hit": any_hit,
+        })
+
+    return {"region": region, "items": items, "count": len(items)}
+
+
+def hot_cold(payload: dict[str, Any]) -> dict[str, Any]:
+    """Compute digit frequency from draws.lao_last2 over a window of days.
+
+    Payload keys:
+      - region: 'lao' (default)
+      - window_days: 90
+
+    Returns: { window_days, total_draws, hot:[{digit,count}...], cold:[...], all:[...] }
+    """
+    region = payload.get("region", "lao")
+    window_days = int(payload.get("window_days", 90))
+
+    if region != "lao":
+        return {"error": f"region {region} ไม่รองรับ hot_cold"}
+
+    rows = _lao_db_query(
+        """
+        SELECT lao_last2, lao_last4
+        FROM draws
+        WHERE status = 'drawn'
+              AND draw_date >= (CURRENT_DATE - (%s || ' days')::interval)
+              AND lao_last2 IS NOT NULL
+        """,
+        (window_days,),
+    )
+    if rows is None:
+        return {"error": "DB unavailable"}
+
+    counts = {str(d): 0 for d in range(10)}
+    for r in rows:
+        for src_key in ("lao_last2", "lao_last4"):
+            v = str(r.get(src_key) or "")
+            for ch in v:
+                if ch.isdigit():
+                    counts[ch] = counts.get(ch, 0) + 1
+
+    sorted_desc = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+    return {
+        "region": region,
+        "window_days": window_days,
+        "total_draws": len(rows),
+        "hot": [{"digit": d, "count": c} for d, c in sorted_desc[:3]],
+        "cold": [{"digit": d, "count": c} for d, c in sorted_desc[-3:]],
+        "all": [{"digit": d, "count": c} for d, c in sorted_desc],
+    }
+
+
 ACTIONS: dict[str, callable] = {
     "predict": predict,
     "send_prediction": send_prediction,
     "fetch_results": fetch_results,
     "vip": vip,
+    "latest_prediction": latest_prediction,
+    "accuracy_stats": accuracy_stats,
+    "history": history,
+    "hot_cold": hot_cold,
 }
 
 
