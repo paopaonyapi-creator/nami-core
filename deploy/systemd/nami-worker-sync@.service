@@ -1,20 +1,19 @@
 [Unit]
-Description=Nami Worker — %i
+Description=Nami Worker (Sync) — %i
 After=network.target nami-core.service
 PartOf=nami-core.service
 
 [Service]
 Type=simple
-User=nami-worker
+User=root
 WorkingDirectory=/opt/nami-core
 Environment=PYTHONPATH=/opt/nami-core/src
 Environment=NAMI_CONFIG_DIR=/opt/nami-core/config
 Environment=NAMI_WORKER=%i
 EnvironmentFile=/etc/nami-harness/nami-core.env
-ExecStart=/opt/nami-core/.venv/bin/python -m nami_core.runtime.queue.worker
-Restart=always
+ExecStart=/opt/nami-core/.venv/bin/python -m nami_core.worker %i
+Restart=on-failure
 RestartSec=5
-WatchdogSec=60
 StandardOutput=journal
 StandardError=journal
 

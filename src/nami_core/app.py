@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -30,6 +31,11 @@ from nami_core.runtime_v2 import (
     restore_git_worktree_files,
     run_runtime_diagnostics,
 )
+from nami_core.runtime.queue.idempotency import idempotency_key
+from nami_core.runtime.queue.jobs_dao import JobsDAO
+from nami_core.runtime.queue.redis_stream import EVENT_STREAM, RedisStream
+from nami_core.runtime.queue.types import JobBudget, JobMessage
+from nami_core.runtime.queue.ulid import generate_ulid
 
 logger = logging.getLogger("nami_core.app")
 
@@ -40,14 +46,16 @@ AUDIT_DB = os.environ.get("NAMI_AUDIT_DB", "/tmp/nami_audit.db")
 def _audit_log(worker: str, action: str, caller_ip: str, ok: bool, latency_ms: float) -> None:
     try:
         conn = sqlite3.connect(AUDIT_DB)
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 worker TEXT, action TEXT, caller_ip TEXT,
                 ok BOOLEAN, latency_ms REAL,
                 timestamp TEXT NOT NULL
             )
-        """)
+            """
+        )
         conn.execute(
             "INSERT INTO audit_log (worker, action, caller_ip, ok, latency_ms, timestamp) VALUES (?,?,?,?,?,?)",
             (worker, action, caller_ip, ok, latency_ms, datetime.now(timezone.utc).isoformat()),
@@ -76,6 +84,9 @@ class DispatchResponse(BaseModel):
     output: dict[str, Any] | None = None
     latency_ms: float | None = None
     error: str | None = None
+    job_id: str | None = None
+    status: str | None = None
+    idempotent: bool | None = None
 
 class BatchDispatchItem(BaseModel):
     worker: str
@@ -255,15 +266,109 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
     mcp_config_file = os.environ.get("NAMI_MCP_CONFIG_FILE")
     app.state.mcp_config = load_mcp_config(mcp_config_file) if mcp_config_file else McpConfig()
     app.state.mcp_client = McpClientManager(app.state.mcp_config)
+    app.state.jobs_dao = JobsDAO()
+    app.state.job_stream = RedisStream()
+    app.state.queue_actions = {"lottery.backtest_v6"}
+    app.state.sync_fallback_enabled = os.environ.get("NAMI_SYNC_FALLBACK", "1") != "0"
 
     @app.on_event("shutdown")
     async def shutdown_mcp_client():
         await app.state.mcp_client.close()
+        stop_event = getattr(app.state, "event_bridge_stop", None)
+        if stop_event is not None:
+            stop_event.set()
 
     def record_runtime_event(event: RuntimeEvent) -> None:
         app.state.runtime_events.append(event)
         if len(app.state.runtime_events) > 500:
             app.state.runtime_events = app.state.runtime_events[-500:]
+
+    def _build_job_budget() -> JobBudget:
+        return JobBudget(
+            max_retries=int(os.environ.get("NAMI_JOB_MAX_RETRIES", "3")),
+            max_seconds=int(os.environ.get("NAMI_JOB_MAX_SECONDS", "300")),
+            max_tokens=int(os.environ.get("NAMI_JOB_MAX_TOKENS", "50000")),
+        )
+
+    def _generate_traceparent() -> str:
+        trace_id = os.urandom(16).hex()
+        span_id = os.urandom(8).hex()
+        return f"00-{trace_id}-{span_id}-01"
+
+    def _enqueue_job(worker: str, action: str, payload: dict[str, Any]) -> tuple[str, bool, str]:
+        action_name = f"{worker}.{action}"
+        key = idempotency_key(action_name, payload)
+        existing = app.state.jobs_dao.get_by_idempotency(key)
+        if existing and existing.get("status") in {"queued", "running", "succeeded"}:
+            return str(existing["id"]), True, str(existing.get("status"))
+
+        job_id = generate_ulid()
+        budget = _build_job_budget()
+        trace_id = _generate_traceparent()
+        app.state.jobs_dao.insert_job(
+            job_id=job_id,
+            action=action_name,
+            payload=payload,
+            idempotency_key=key,
+            trace_id=trace_id,
+            parent_id=None,
+            budget=budget,
+            status="queued",
+            attempt=1,
+        )
+        message = JobMessage(
+            id=job_id,
+            action=action_name,
+            payload=payload,
+            idempotency_key=key,
+            trace_id=trace_id,
+            parent_id=None,
+            budget=budget,
+            enqueued_at=datetime.now(timezone.utc).isoformat(),
+            attempt=1,
+        )
+        app.state.job_stream.enqueue(message)
+        app.state.job_stream.publish_event("job.queued", {"job_id": job_id, "action": action_name})
+        return job_id, False, "queued"
+
+    def _start_event_stream_bridge() -> None:
+        if not os.environ.get("NAMI_REDIS_URL"):
+            return
+        stop_event = threading.Event()
+        app.state.event_bridge_stop = stop_event
+        consumer = f"nami-core-{os.getpid()}"
+        group = "sse-bridge"
+
+        def _loop() -> None:
+            while not stop_event.is_set():
+                try:
+                    app.state.job_stream.ensure_group(group, stream=EVENT_STREAM)
+                    messages = app.state.job_stream.read_group(group, consumer, count=10, stream=EVENT_STREAM)
+                    if not messages:
+                        stop_event.wait(2)
+                        continue
+                    for msg_id, fields in messages:
+                        event_name = fields.get("event", "unknown")
+                        raw_data = fields.get("data") or "{}"
+                        try:
+                            data = json.loads(raw_data)
+                        except json.JSONDecodeError:
+                            data = {"raw": raw_data}
+                        job_id = data.get("job_id") if isinstance(data, dict) else None
+                        event = RuntimeEvent(type=event_name, job_id=job_id, data=data if isinstance(data, dict) else {})
+                        record_runtime_event(event)
+                        ws_manager.broadcast_sync("runtime.event", event.to_dict())
+                        app.state.job_stream.ack(group, msg_id, stream=EVENT_STREAM)
+                except Exception as exc:
+                    logger.warning("Event stream bridge error: %s", exc)
+                    stop_event.wait(2)
+
+        thread = threading.Thread(target=_loop, daemon=True, name="nami-event-bridge")
+        thread.start()
+
+    if os.environ.get("NAMI_JOBS_AUTO_DDL") == "1":
+        app.state.jobs_dao.ensure_schema()
+    _start_event_stream_bridge()
     # ── Request logging middleware ──
 
     @app.middleware("http")
@@ -697,11 +802,44 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         if not req.worker or not req.action:
             raise HTTPException(status_code=400, detail="worker and action required")
 
+        action_name = f"{req.worker}.{req.action}"
+
         # Per-worker rate limit
         if req.worker not in worker_limiters:
             worker_limiters[req.worker] = RateLimiter(max_requests=worker_rate_max, window_seconds=60)
         if not worker_limiters[req.worker].is_allowed(ip):
             raise HTTPException(status_code=429, detail=f"rate limit exceeded for worker '{req.worker}'")
+
+        if action_name in app.state.queue_actions:
+            t0 = time.monotonic()
+            try:
+                job_id, idempotent, status = _enqueue_job(req.worker, req.action, req.payload)
+                latency = (time.monotonic() - t0) * 1000
+                Metrics.record_dispatch(latency)
+                _audit_log(req.worker, req.action, ip, True, latency)
+                await ws_manager.broadcast(
+                    "dispatch",
+                    {
+                        "worker": req.worker,
+                        "action": req.action,
+                        "latency_ms": round(latency, 1),
+                        "job_id": job_id,
+                        "status": status,
+                    },
+                )
+                return DispatchResponse(
+                    ok=True,
+                    job_id=job_id,
+                    status=status,
+                    idempotent=idempotent,
+                    latency_ms=round(latency, 1),
+                )
+            except Exception as exc:
+                if not app.state.sync_fallback_enabled:
+                    Metrics.record_error()
+                    _audit_log(req.worker, req.action, ip, False, 0)
+                    raise HTTPException(status_code=503, detail=f"queue unavailable: {exc}")
+                logger.warning("Queue enqueue failed, falling back to sync: %s", exc)
 
         try:
             t0 = time.monotonic()
@@ -737,12 +875,47 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             if not item.worker or not item.action:
                 results.append({"worker": item.worker, "action": item.action, "ok": False, "error": "worker and action required", "latency_ms": 0})
                 continue
+            action_name = f"{item.worker}.{item.action}"
             # Per-worker rate limit
             if item.worker not in worker_limiters:
                 worker_limiters[item.worker] = RateLimiter(max_requests=worker_rate_max, window_seconds=60)
             if not worker_limiters[item.worker].is_allowed(ip):
                 results.append({"worker": item.worker, "action": item.action, "ok": False, "error": f"rate limit exceeded for worker '{item.worker}'", "latency_ms": 0})
                 continue
+            if action_name in app.state.queue_actions:
+                t0 = time.monotonic()
+                try:
+                    job_id, idempotent, status = _enqueue_job(item.worker, item.action, item.payload)
+                    latency = (time.monotonic() - t0) * 1000
+                    Metrics.record_dispatch(latency)
+                    _audit_log(item.worker, item.action, ip, True, latency)
+                    await ws_manager.broadcast(
+                        "dispatch",
+                        {
+                            "worker": item.worker,
+                            "action": item.action,
+                            "latency_ms": round(latency, 1),
+                            "job_id": job_id,
+                            "status": status,
+                        },
+                    )
+                    results.append(
+                        {
+                            "worker": item.worker,
+                            "action": item.action,
+                            "ok": True,
+                            "job_id": job_id,
+                            "status": status,
+                            "idempotent": idempotent,
+                            "latency_ms": round(latency, 1),
+                        }
+                    )
+                    continue
+                except Exception as exc:
+                    if not app.state.sync_fallback_enabled:
+                        results.append({"worker": item.worker, "action": item.action, "ok": False, "error": f"queue unavailable: {exc}", "latency_ms": 0})
+                        continue
+                    logger.warning("Queue enqueue failed in batch, falling back to sync: %s", exc)
             try:
                 t0 = time.monotonic()
                 result = app.state.hermes.dispatch(item.worker, item.action, item.payload)

@@ -1,5 +1,5 @@
 [Unit]
-Description=Nami Worker — %i
+Description=Nami Worker
 After=network.target nami-core.service
 PartOf=nami-core.service
 
@@ -9,7 +9,7 @@ User=nami-worker
 WorkingDirectory=/opt/nami-core
 Environment=PYTHONPATH=/opt/nami-core/src
 Environment=NAMI_CONFIG_DIR=/opt/nami-core/config
-Environment=NAMI_WORKER=%i
+Environment=NAMI_WORKER=lottery
 EnvironmentFile=/etc/nami-harness/nami-core.env
 ExecStart=/opt/nami-core/.venv/bin/python -m nami_core.runtime.queue.worker
 Restart=always
