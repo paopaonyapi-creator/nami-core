@@ -31,6 +31,7 @@ from nami_core.runtime_v2 import (
     restore_git_worktree_files,
     run_runtime_diagnostics,
 )
+from nami_core.runtime.obs import configure_otel, cost_span
 from nami_core.runtime.queue.idempotency import idempotency_key
 from nami_core.runtime.queue.jobs_dao import JobsDAO
 from nami_core.runtime.queue.redis_stream import EVENT_STREAM, RedisStream
@@ -256,16 +257,17 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         logger.info("Generated NAMI_WEBHOOK_SECRET (set env var to customize)")
 
     # Store references in app state
+    mcp_config_file = os.environ.get("NAMI_MCP_CONFIG_FILE")
     app.state.hermes = hermes
     app.state.scheduler = scheduler
     app.state.api_key = api_key
     app.state.ws_manager = ws_manager
-    app.state.tool_registry = ToolRegistry.from_hermes(hermes)
+    app.state.tool_registry = ToolRegistry.from_hermes(app.state.hermes)
     app.state.runtime_jobs = RuntimeJobStore(os.environ.get("NAMI_RUNTIME_JOBS_FILE") or None)
     app.state.runtime_events = []
-    mcp_config_file = os.environ.get("NAMI_MCP_CONFIG_FILE")
     app.state.mcp_config = load_mcp_config(mcp_config_file) if mcp_config_file else McpConfig()
     app.state.mcp_client = McpClientManager(app.state.mcp_config)
+    app.state.otel_enabled = configure_otel()
     app.state.jobs_dao = JobsDAO()
     app.state.job_stream = RedisStream()
     app.state.queue_actions = {"lottery.backtest_v6"}
@@ -297,39 +299,44 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
 
     def _enqueue_job(worker: str, action: str, payload: dict[str, Any]) -> tuple[str, bool, str]:
         action_name = f"{worker}.{action}"
-        key = idempotency_key(action_name, payload)
-        existing = app.state.jobs_dao.get_by_idempotency(key)
-        if existing and existing.get("status") in {"queued", "running", "succeeded"}:
-            return str(existing["id"]), True, str(existing.get("status"))
+        with cost_span(
+            "nami.dispatch.enqueue",
+            role="dispatcher",
+            attributes={"nami.action": action_name, "nami.worker": worker},
+        ):
+            key = idempotency_key(action_name, payload)
+            existing = app.state.jobs_dao.get_by_idempotency(key)
+            if existing and existing.get("status") in {"queued", "running", "succeeded"}:
+                return str(existing["id"]), True, str(existing.get("status"))
 
-        job_id = generate_ulid()
-        budget = _build_job_budget()
-        trace_id = _generate_traceparent()
-        app.state.jobs_dao.insert_job(
-            job_id=job_id,
-            action=action_name,
-            payload=payload,
-            idempotency_key=key,
-            trace_id=trace_id,
-            parent_id=None,
-            budget=budget,
-            status="queued",
-            attempt=1,
-        )
-        message = JobMessage(
-            id=job_id,
-            action=action_name,
-            payload=payload,
-            idempotency_key=key,
-            trace_id=trace_id,
-            parent_id=None,
-            budget=budget,
-            enqueued_at=datetime.now(timezone.utc).isoformat(),
-            attempt=1,
-        )
-        app.state.job_stream.enqueue(message)
-        app.state.job_stream.publish_event("job.queued", {"job_id": job_id, "action": action_name})
-        return job_id, False, "queued"
+            job_id = generate_ulid()
+            budget = _build_job_budget()
+            trace_id = _generate_traceparent()
+            app.state.jobs_dao.insert_job(
+                job_id=job_id,
+                action=action_name,
+                payload=payload,
+                idempotency_key=key,
+                trace_id=trace_id,
+                parent_id=None,
+                budget=budget,
+                status="queued",
+                attempt=1,
+            )
+            message = JobMessage(
+                id=job_id,
+                action=action_name,
+                payload=payload,
+                idempotency_key=key,
+                trace_id=trace_id,
+                parent_id=None,
+                budget=budget,
+                enqueued_at=datetime.now(timezone.utc).isoformat(),
+                attempt=1,
+            )
+            app.state.job_stream.enqueue(message)
+            app.state.job_stream.publish_event("job.queued", {"job_id": job_id, "action": action_name, "trace_id": trace_id})
+            return job_id, False, "queued"
 
     def _start_event_stream_bridge() -> None:
         if not os.environ.get("NAMI_REDIS_URL"):

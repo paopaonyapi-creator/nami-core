@@ -1,0 +1,1 @@
+{"title":"Nami Cost by Role","schemaVersion":39,"version":1,"panels":[{"type":"timeseries","title":"Cost USD by Role","targets":[{"expr":"sum by (nami_role) (rate(cost_usd_sum[24h]))"}]}]}

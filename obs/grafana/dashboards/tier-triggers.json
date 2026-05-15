@@ -1,0 +1,1 @@
+{"title":"Nami Tier Triggers","schemaVersion":39,"version":1,"panels":[{"type":"stat","title":"Queue Workers","targets":[{"expr":"nami_core_workers_count"}]},{"type":"stat","title":"Scheduler Running","targets":[{"expr":"nami_core_scheduler_running"}]}]}

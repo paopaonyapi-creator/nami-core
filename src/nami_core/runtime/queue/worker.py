@@ -13,6 +13,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from nami_core.hermes import Hermes
+from nami_core.runtime.obs import configure_otel, cost_span
 from nami_core.runtime.queue.jobs_dao import JobsDAO
 from nami_core.runtime.queue.redis_stream import RedisStream
 from nami_core.runtime.queue.types import JobMessage, TaskInput, TaskOutput
@@ -71,6 +72,7 @@ class QueueWorker:
         self.worker_name = worker_name
         self.redis = RedisStream(redis_url)
         self.jobs = JobsDAO(dbname=dbname)
+        self.otel_enabled = configure_otel()
         self.hermes = Hermes()
         self.registry = WorkerRegistry()
         self._register_worker(worker_name)
@@ -184,8 +186,26 @@ class QueueWorker:
 
     def _execute_task(self, message: JobMessage, worker: str, action: str) -> dict[str, Any] | None:
         payload = _build_task_payload(message)
-        result = self.hermes.dispatch(worker, action, payload)
-        return result.output
+        with cost_span(
+            "nami.worker.execute",
+            role="worker",
+            attributes={
+                "job.id": message.id,
+                "job.action": message.action,
+                "job.attempt": message.attempt,
+                "trace.id": message.trace_id,
+                "nami.worker": worker,
+                "nami.action": action,
+            },
+        ) as span:
+            result = self.hermes.dispatch(worker, action, payload)
+            output = result.output
+            if isinstance(output, dict):
+                if "tokens_used" in output:
+                    span.set_attribute("tokens.used", int(output.get("tokens_used") or 0))
+                if "cost_usd" in output:
+                    span.set_attribute("cost.usd", float(output.get("cost_usd") or 0.0))
+            return output
 
     def _handle_mismatch(self, msg_id: str, message: JobMessage) -> None:
         error = {"error": f"worker mismatch for {message.action}"}
@@ -221,15 +241,15 @@ class QueueWorker:
                     attempt=attempt,
                 )
                 self.redis.enqueue(retry_message)
-                self.redis.publish_event("job.failed", {"job_id": message.id, "attempt": attempt, "error": error})
+                self.redis.publish_event("job.failed", {"job_id": message.id, "attempt": attempt, "error": error, "trace_id": message.trace_id})
             else:
                 self.jobs.mark_dead(message.id, error)
                 self.redis.enqueue_dead(message, error)
-                self.redis.publish_event("job.dead", {"job_id": message.id, "attempt": attempt, "error": error})
+                self.redis.publish_event("job.dead", {"job_id": message.id, "attempt": attempt, "error": error, "trace_id": message.trace_id})
         else:
             task_output = _build_task_output(output, duration_ms)
             self.jobs.mark_succeeded(message.id, task_output.to_dict())
-            self.redis.publish_event("job.succeeded", {"job_id": message.id, "duration_ms": duration_ms})
+            self.redis.publish_event("job.succeeded", {"job_id": message.id, "duration_ms": duration_ms, "trace_id": message.trace_id, "cost_usd": task_output.cost_usd})
 
         self.redis.ack(self.group, msg_id)
 
