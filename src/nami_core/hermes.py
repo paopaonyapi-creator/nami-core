@@ -71,7 +71,12 @@ class Hermes:
             correlation_id=correlation_id or "",
         )
 
-        return entry.runtime.run(context, payload, entry.task)
+        # Inject action into payload so worker tasks (which receive only the
+        # payload dict) can route on it without relying on caller convention.
+        # An explicit `action` already in payload wins (caller override).
+        merged_payload: dict[str, Any] = {"action": action, **payload}
+
+        return entry.runtime.run(context, merged_payload, entry.task)
 
     def list_workers(self) -> list[str]:
         return list(self._workers.keys())

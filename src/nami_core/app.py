@@ -133,6 +133,8 @@ class Metrics:
         s = cls.snapshot(hermes, scheduler)
         lines = []
         for key, value in s.items():
+            if isinstance(value, bool):
+                value = 1 if value else 0
             metric_type = "counter" if "total" in key else "gauge"
             lines.append(f"# TYPE {key} {metric_type}")
             lines.append(f"{key} {value}")

@@ -369,6 +369,284 @@ def predict(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+def _ensure_v6_log_table() -> bool:
+    """Create v6_prediction_log table if not exists. Returns True on success."""
+    if not _HAS_PSYCOPG:
+        return False
+    conn = _lao_db_connect()
+    if conn is None:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS v6_prediction_log (
+                    id SERIAL PRIMARY KEY,
+                    target_date DATE NOT NULL UNIQUE,
+                    picks_1d TEXT[] DEFAULT '{}',
+                    picks_2d TEXT[] DEFAULT '{}',
+                    picks_3d TEXT[] DEFAULT '{}',
+                    scores JSONB DEFAULT '{}',
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning("v6_log table create failed: %s", e)
+        return False
+    finally:
+        conn.close()
+
+
+def _save_v6_prediction(target_date: str, picks_1d: list, picks_2d: list, picks_3d: list, scores: dict) -> bool:
+    """Upsert a v6 prediction row into v6_prediction_log. Returns True on success."""
+    if not _HAS_PSYCOPG:
+        return False
+    _ensure_v6_log_table()
+    conn = _lao_db_connect()
+    if conn is None:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO v6_prediction_log (target_date, picks_1d, picks_2d, picks_3d, scores)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (target_date) DO UPDATE
+                SET picks_1d = EXCLUDED.picks_1d,
+                    picks_2d = EXCLUDED.picks_2d,
+                    picks_3d = EXCLUDED.picks_3d,
+                    scores   = EXCLUDED.scores
+                """,
+                (target_date, picks_1d, picks_2d, picks_3d, json.dumps(scores)),
+            )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning("save_v6_prediction failed: %s", e)
+        return False
+    finally:
+        conn.close()
+
+
+def predict_v6(payload):
+    region = payload.get("region", "lao")
+    if region != "lao":
+        return {"error": "v6 engine currently supports only lao", "region": region}
+    draws = fetch_lao_draws(100)
+    if not draws:
+        return {"error": "no draw data available", "region": region}
+
+    freq_30d = {str(d): 0 for d in range(10)}
+    for draw in draws[:30]:
+        for src in ("lao_last2", "lao_last4"):
+            v = str(draw.get(src) or "")
+            for ch in v:
+                if ch.isdigit():
+                    freq_30d[ch] = freq_30d.get(ch, 0) + 1
+
+    freq_7d = {str(d): 0 for d in range(10)}
+    for i, draw in enumerate(draws[:7]):
+        weight = 3 - i * 0.3
+        for src in ("lao_last2", "lao_last4"):
+            v = str(draw.get(src) or "")
+            for ch in v:
+                if ch.isdigit():
+                    freq_7d[ch] = freq_7d.get(ch, 0) + weight
+
+    transitions = {}
+    digit_counts = {}
+    for draw in draws:
+        last4 = str(draw.get("lao_last4") or "")
+        if len(last4) < 4:
+            continue
+        for i, ch in enumerate(last4):
+            if not ch.isdigit():
+                continue
+            digit_counts[ch] = digit_counts.get(ch, 0) + 1
+            if i + 1 < len(last4):
+                nxt = last4[i + 1]
+                if not nxt.isdigit():
+                    continue
+                if ch not in transitions:
+                    transitions[ch] = {}
+                transitions[ch][nxt] = transitions[ch].get(nxt, 0) + 1
+
+    for ch, nxt_map in transitions.items():
+        total = sum(nxt_map.values())
+        if total:
+            for nxt, cnt in nxt_map.items():
+                nxt_map[nxt] = cnt / total
+
+    latest_draw = draws[0] if draws else {}
+    latest_last4 = str(latest_draw.get("lao_last4") or "")
+    latest_last_digit = latest_last4[-1] if latest_last4 and latest_last4[-1].isdigit() else None
+
+    digit_scores = {}
+    for d in range(10):
+        ds = str(d)
+        score = 0.0
+        score += freq_30d.get(ds, 0) * 1.0
+        score += freq_7d.get(ds, 0) * 2.0
+        score += digit_counts.get(ds, 0) * 0.5
+        if latest_last_digit and latest_last_digit in transitions:
+            score += transitions[latest_last_digit].get(ds, 0) * 10.0
+        digit_scores[ds] = score
+
+    top_digits = sorted(digit_scores.items(), key=lambda kv: kv[1], reverse=True)
+    top_1d = [d for d, _ in top_digits[:3]]
+
+    top_2d = []
+    seen_2d = set()
+    for d1, _ in top_digits[:5]:
+        for d2, _ in top_digits[:5]:
+            num = f"{d1}{d2}"
+            if num not in seen_2d:
+                seen_2d.add(num)
+                top_2d.append(num)
+            if len(top_2d) >= 4:
+                break
+        if len(top_2d) >= 4:
+            break
+
+    top_3d = []
+    seen_3d = set()
+    for d1, _ in top_digits[:4]:
+        for d2, _ in top_digits[:4]:
+            for d3, _ in top_digits[:4]:
+                num = f"{d1}{d2}{d3}"
+                if num not in seen_3d:
+                    seen_3d.add(num)
+                    top_3d.append(num)
+                if len(top_3d) >= 2:
+                    break
+            if len(top_3d) >= 2:
+                break
+        if len(top_3d) >= 2:
+            break
+
+    target_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    scores_top = {d: round(s, 2) for d, s in top_digits[:5]}
+
+    if payload.get("save", True):
+        _save_v6_prediction(target_date, top_1d, top_2d, top_3d, scores_top)
+
+    return {
+        "engine": "Engine v6 (ensemble)",
+        "target_date": target_date,
+        "1d": top_1d,
+        "2d_main": top_2d,
+        "2d_secondary": [],
+        "3d": top_3d,
+        "scores": scores_top,
+    }
+
+
+def accuracy_v6(payload: dict) -> dict:
+    """Compute hit-rate of v6 predictions against actual draws.
+
+    Payload keys:
+      - last_n: window size (default 30)
+    """
+    last_n = int(payload.get("last_n", 30))
+    rows = _lao_db_query(
+        """
+        SELECT v.target_date, v.picks_1d, v.picks_2d, v.picks_3d,
+               d.lao_last2, d.lao_last3
+        FROM v6_prediction_log v
+        JOIN draws d ON d.draw_date = v.target_date
+        WHERE d.status = 'drawn' AND d.lao_last2 IS NOT NULL
+        ORDER BY v.target_date DESC LIMIT %s
+        """,
+        (last_n,),
+    )
+    if rows is None:
+        return {"error": "DB unavailable or table not found"}
+    if not rows:
+        return {"hit_rate_1d": 0.0, "hit_rate_2d": 0.0, "hit_rate_3d": 0.0,
+                "hits_1d": 0, "total": 0, "streak_1d": 0, "window": last_n,
+                "note": "no v6 predictions with draw results yet"}
+
+    hits_1d = hits_2d = hits_3d = 0
+    total = len(rows)
+    streak_1d = 0
+    counting_streak = True
+    last_hit_date: str | None = None
+
+    for row in rows:
+        last2 = str(row.get("lao_last2") or "").strip()
+        last3 = str(row.get("lao_last3") or "").strip()
+        p1d = row.get("picks_1d") or []
+        p2d = row.get("picks_2d") or []
+        p3d = row.get("picks_3d") or []
+
+        hit1 = any(d in last2 for d in p1d if d)
+        hit2 = any(n == last2 for n in p2d if n)
+        hit3 = any(n == last3 for n in p3d if n)
+
+        if hit1:
+            hits_1d += 1
+            if last_hit_date is None:
+                last_hit_date = str(row.get("target_date") or "")
+        if hit2:
+            hits_2d += 1
+        if hit3:
+            hits_3d += 1
+        if counting_streak:
+            if hit1:
+                streak_1d += 1
+            else:
+                counting_streak = False
+
+    return {
+        "window": last_n,
+        "total": total,
+        "hits_1d": hits_1d,
+        "hits_2d": hits_2d,
+        "hits_3d": hits_3d,
+        "hit_rate_1d": round(hits_1d / total, 4) if total else 0.0,
+        "hit_rate_2d": round(hits_2d / total, 4) if total else 0.0,
+        "hit_rate_3d": round(hits_3d / total, 4) if total else 0.0,
+        "streak_1d": streak_1d,
+        "last_hit_date": last_hit_date,
+    }
+
+
+def compare_engines(payload):
+    region = payload.get("region", "lao")
+    last_n = int(payload.get("last_n", 30))
+    v5 = latest_prediction({"region": region})
+    v6 = predict_v6({"region": region, "save": False})
+
+    v5_acc = accuracy_stats({"region": region, "last_n": last_n})
+    v6_acc = accuracy_v6({"last_n": last_n})
+
+    v6_total = v6_acc.get("total", 0)
+    promote = False
+    if v6_total >= 5:
+        promote = (
+            v6_acc.get("hit_rate_1d", 0) > v5_acc.get("by_bet_type", {}).get("1d", {}).get("rate", 0)
+            and v6_acc.get("streak_1d", 0) >= 3
+        )
+
+    return {
+        "region": region,
+        "v5_3": v5,
+        "v6": v6,
+        "accuracy": {
+            "v5_3": v5_acc,
+            "v6": v6_acc,
+        },
+        "auto_promote": {
+            "should_promote": promote,
+            "v6_streak_1d": v6_acc.get("streak_1d", 0),
+            "v6_hit_rate_1d": v6_acc.get("hit_rate_1d", 0),
+            "v5_hit_rate_1d": v5_acc.get("by_bet_type", {}).get("1d", {}).get("rate", 0),
+            "note": "promotes when v6 has >= 5 data points and streak >= 3 and hit_rate_1d > v5",
+        },
+    }
+
 def send_prediction(payload: dict[str, Any]) -> dict[str, Any]:
     """Format and send prediction to subscriber channel.
 
@@ -798,8 +1076,41 @@ def hot_cold(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def get_active_engine(payload: dict) -> dict:
+    """Return which engine is currently active (v5_3 or v6) based on accuracy stats.
+
+    Returns v6 if accuracy_v6 has enough data AND hit_rate_1d > v5_3 AND streak >= 3.
+    Otherwise returns v5_3.
+    """
+    region = payload.get("region", "lao")
+    v6_acc = accuracy_v6({"last_n": 30})
+    v5_acc = accuracy_stats({"region": region, "last_n": 30})
+
+    v6_total = v6_acc.get("total", 0)
+    if v6_total < 5:
+        return {"engine": "v5_3", "reason": f"v6 only has {v6_total} draws (need >=5)"}
+
+    v6_rate = v6_acc.get("hit_rate_1d", 0.0)
+    v5_rate = v5_acc.get("by_bet_type", {}).get("1d", {}).get("rate", 0.0)
+    streak = v6_acc.get("streak_1d", 0)
+
+    if v6_rate > v5_rate and streak >= 3:
+        return {
+            "engine": "v6",
+            "reason": f"v6 hit_rate_1d={v6_rate:.1%} > v5={v5_rate:.1%}, streak={streak}",
+        }
+    return {
+        "engine": "v5_3",
+        "reason": f"v6 hit_rate_1d={v6_rate:.1%} <= v5={v5_rate:.1%} or streak={streak}<3",
+    }
+
+
 ACTIONS: dict[str, callable] = {
     "predict": predict,
+    "predict_v6": predict_v6,
+    "accuracy_v6": accuracy_v6,
+    "get_active_engine": get_active_engine,
+    "compare_engines": compare_engines,
     "send_prediction": send_prediction,
     "fetch_results": fetch_results,
     "vip": vip,

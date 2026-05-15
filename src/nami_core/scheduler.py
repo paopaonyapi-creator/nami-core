@@ -45,6 +45,14 @@ SCHEDULES: list[dict[str, Any]] = [
     },
     {
         "worker": "lottery",
+        "action": "predict_v6",
+        "payload": {"region": "lao", "save": True},
+        "interval": 86400,
+        "hour": 10,
+        "description": "v6 prediction daily save at 10:00 ICT (03:00 UTC)",
+    },
+    {
+        "worker": "lottery",
         "action": "vip",
         "payload": {"region": "lao", "send": True},
         "interval": 86400,
