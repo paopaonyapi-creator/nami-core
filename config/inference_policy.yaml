@@ -1,0 +1,23 @@
+routes:
+  - pattern: "ollama:*"
+    backend: "http://127.0.0.1:11434/v1/chat/completions"
+    budget_per_hour:
+      tokens: 500000
+      cost_usd: 0
+  - pattern: "maxplus:*"
+    backend: "${MAXPLUS_URL}/v1/chat/completions"
+    budget_per_hour:
+      tokens: 200000
+      cost_usd: 5.0
+  - pattern: "openai:*"
+    backend: "https://api.openai.com/v1/chat/completions"
+    budget_per_hour:
+      tokens: 100000
+      cost_usd: 10.0
+fallback_order:
+  - "ollama:qwen2.5:3b"
+  - "maxplus:default"
+cache:
+  enabled: true
+  ttl_seconds: 86400
+  only_temperature_zero: true

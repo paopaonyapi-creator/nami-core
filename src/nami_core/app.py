@@ -18,6 +18,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, 
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from nami_core.inference_gateway import InferenceGateway, InferenceRequest
 from nami_core.mcp_client import McpClientError, McpClientManager
 from nami_core.mcp_config import McpConfig, load_mcp_config
 from nami_core.runtime_v2 import (
@@ -294,6 +295,7 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
     app.state.mcp_config = load_mcp_config(mcp_config_file) if mcp_config_file else McpConfig()
     app.state.mcp_client = McpClientManager(app.state.mcp_config)
     app.state.otel_enabled = configure_otel()
+    app.state.inference_gateway = InferenceGateway()
     app.state.jobs_dao = JobsDAO()
     app.state.job_stream = RedisStream()
     app.state.queue_actions = {"lottery.backtest_v6"}
@@ -436,6 +438,21 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             raise HTTPException(status_code=401, detail="unauthorized")
         return key
 
+    def _dump_model(model: Any) -> dict[str, Any]:
+        if hasattr(model, "model_dump"):
+            return model.model_dump()
+        return model.dict()
+
+    def _complete_inference(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            req = InferenceRequest(**payload)
+            result = app.state.inference_gateway.complete(req)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"ok": True, **_dump_model(result)}
+
     # ── Routes ──
 
     @app.get("/runtime/health")
@@ -463,6 +480,11 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         mcp_tools = [tool.to_metadata().to_dict() for tool in app.state.mcp_client.tools()]
         tools = sorted([*registry_tools, *mcp_tools], key=lambda tool: tool["name"])
         return {"tools": tools}
+
+    @app.post("/runtime/inference/chat")
+    async def runtime_inference_chat(req: InferenceRequest, _auth: str = Depends(verify_api_key)):
+        Metrics.request_count += 1
+        return _complete_inference(_dump_model(req))
 
     @app.get("/runtime/mcp/servers")
     async def runtime_mcp_servers(request: Request):
@@ -621,6 +643,12 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             BridgeMetrics.record("dispatchWorker", "runtime.tools.invoke")
             response.headers["Deprecation"] = "2026-06-30"
         worker, action, tool_name = _tool_parts(req)
+        if tool_name == "nami.llm.chat":
+            if app.state.api_key:
+                key = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+                if key != app.state.api_key:
+                    raise HTTPException(status_code=401, detail="api key required")
+            return _complete_inference(req.payload)
         tool = app.state.tool_registry.get(tool_name)
         if tool is None:
             raise HTTPException(status_code=404, detail=f"tool not registered: {tool_name}")
