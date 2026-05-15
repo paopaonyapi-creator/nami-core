@@ -17,6 +17,7 @@ import os
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+from itertools import product
 from typing import Any
 
 import subprocess
@@ -371,7 +372,10 @@ def predict(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _ensure_v6_log_table() -> bool:
-    """Create v6_prediction_log table if not exists. Returns True on success."""
+    """Create v6_prediction_log table if not exists. Returns True on success.
+
+    Idempotent ALTER also adds `is_backfill` column for older installs.
+    """
     if not _HAS_PSYCOPG:
         return False
     conn = _lao_db_connect()
@@ -387,8 +391,13 @@ def _ensure_v6_log_table() -> bool:
                     picks_2d TEXT[] DEFAULT '{}',
                     picks_3d TEXT[] DEFAULT '{}',
                     scores JSONB DEFAULT '{}',
+                    is_backfill BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMPTZ DEFAULT NOW()
                 )
+            """)
+            cur.execute("""
+                ALTER TABLE v6_prediction_log
+                ADD COLUMN IF NOT EXISTS is_backfill BOOLEAN DEFAULT FALSE
             """)
         conn.commit()
         return True
@@ -399,47 +408,105 @@ def _ensure_v6_log_table() -> bool:
         conn.close()
 
 
-def _save_v6_prediction(target_date: str, picks_1d: list, picks_2d: list, picks_3d: list, scores: dict) -> bool:
-    """Upsert a v6 prediction row into v6_prediction_log. Returns True on success."""
+def _save_v6_prediction(
+    target_date: str,
+    picks_1d: list,
+    picks_2d: list,
+    picks_3d: list,
+    scores: dict,
+    is_backfill: bool = False,
+    force: bool = True,
+) -> str:
+    """Upsert a v6 prediction row into v6_prediction_log.
+
+    Returns one of: "inserted", "updated", "skipped", "failed".
+    - force=True (default for live predict_v6): ON CONFLICT DO UPDATE overwrites existing row.
+    - force=False (used by backtest_v6): ON CONFLICT DO NOTHING preserves real predictions.
+    """
     if not _HAS_PSYCOPG:
-        return False
+        return "failed"
     _ensure_v6_log_table()
     conn = _lao_db_connect()
     if conn is None:
-        return False
+        return "failed"
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO v6_prediction_log (target_date, picks_1d, picks_2d, picks_3d, scores)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (target_date) DO UPDATE
-                SET picks_1d = EXCLUDED.picks_1d,
-                    picks_2d = EXCLUDED.picks_2d,
-                    picks_3d = EXCLUDED.picks_3d,
-                    scores   = EXCLUDED.scores
-                """,
-                (target_date, picks_1d, picks_2d, picks_3d, json.dumps(scores)),
-            )
-        conn.commit()
-        return True
+            if force:
+                cur.execute(
+                    """
+                    INSERT INTO v6_prediction_log (target_date, picks_1d, picks_2d, picks_3d, scores, is_backfill)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (target_date) DO UPDATE
+                    SET picks_1d = EXCLUDED.picks_1d,
+                        picks_2d = EXCLUDED.picks_2d,
+                        picks_3d = EXCLUDED.picks_3d,
+                        scores   = EXCLUDED.scores,
+                        is_backfill = EXCLUDED.is_backfill
+                    RETURNING (xmax = 0) AS inserted
+                    """,
+                    (target_date, picks_1d, picks_2d, picks_3d, json.dumps(scores), is_backfill),
+                )
+                row = cur.fetchone()
+                conn.commit()
+                if row is None:
+                    return "failed"
+                inserted = row["inserted"] if isinstance(row, dict) else row[0]
+                return "inserted" if inserted else "updated"
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO v6_prediction_log (target_date, picks_1d, picks_2d, picks_3d, scores, is_backfill)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (target_date) DO NOTHING
+                    """,
+                    (target_date, picks_1d, picks_2d, picks_3d, json.dumps(scores), is_backfill),
+                )
+                rc = cur.rowcount
+                conn.commit()
+                return "inserted" if rc > 0 else "skipped"
     except Exception as e:
         logger.warning("save_v6_prediction failed: %s", e)
-        return False
+        return "failed"
     finally:
         conn.close()
 
 
-def predict_v6(payload):
-    region = payload.get("region", "lao")
-    if region != "lao":
-        return {"error": "v6 engine currently supports only lao", "region": region}
-    draws = fetch_lao_draws(100)
-    if not draws:
-        return {"error": "no draw data available", "region": region}
+DEFAULT_V6_WEIGHTS: dict[str, float] = {
+    "freq_30d": 1.0,
+    "freq_7d": 2.0,
+    "digit_count": 0.5,
+    "markov": 10.0,
+    "gap": 0.0,
+    "pair": 0.0,
+}
+
+
+def _normalize_v6_weights(value: Any = None) -> dict[str, float]:
+    weights = dict(DEFAULT_V6_WEIGHTS)
+    if not isinstance(value, dict):
+        return weights
+    for key in weights:
+        raw = value.get(key)
+        if raw is None:
+            continue
+        try:
+            weights[key] = max(-100.0, min(100.0, float(raw)))
+        except (TypeError, ValueError):
+            continue
+    return weights
+
+
+def _v6_compute(history_draws: list[dict[str, Any]], weights: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Pure v6 ensemble: takes history (DESC order, latest-first) and returns picks.
+
+    No DB writes, no `datetime.now()` calls. Used by both live predict_v6 and backtest_v6.
+    """
+    weights_used = _normalize_v6_weights(weights)
+    if not history_draws:
+        return {"1d": [], "2d": [], "3d": [], "scores": {}, "weights_used": weights_used}
 
     freq_30d = {str(d): 0 for d in range(10)}
-    for draw in draws[:30]:
+    for draw in history_draws[:30]:
         for src in ("lao_last2", "lao_last4"):
             v = str(draw.get(src) or "")
             for ch in v:
@@ -447,7 +514,7 @@ def predict_v6(payload):
                     freq_30d[ch] = freq_30d.get(ch, 0) + 1
 
     freq_7d = {str(d): 0 for d in range(10)}
-    for i, draw in enumerate(draws[:7]):
+    for i, draw in enumerate(history_draws[:7]):
         weight = 3 - i * 0.3
         for src in ("lao_last2", "lao_last4"):
             v = str(draw.get(src) or "")
@@ -455,9 +522,9 @@ def predict_v6(payload):
                 if ch.isdigit():
                     freq_7d[ch] = freq_7d.get(ch, 0) + weight
 
-    transitions = {}
-    digit_counts = {}
-    for draw in draws:
+    transitions: dict[str, dict[str, float]] = {}
+    digit_counts: dict[str, int] = {}
+    for draw in history_draws:
         last4 = str(draw.get("lao_last4") or "")
         if len(last4) < 4:
             continue
@@ -479,39 +546,80 @@ def predict_v6(payload):
             for nxt, cnt in nxt_map.items():
                 nxt_map[nxt] = cnt / total
 
-    latest_draw = draws[0] if draws else {}
+    latest_draw = history_draws[0] if history_draws else {}
     latest_last4 = str(latest_draw.get("lao_last4") or "")
     latest_last_digit = latest_last4[-1] if latest_last4 and latest_last4[-1].isdigit() else None
 
-    digit_scores = {}
+    digit_scores: dict[str, float] = {}
+    gap_scores: dict[str, float] = {str(d): 0.0 for d in range(10)}
+    if weights_used["gap"]:
+        positions: dict[str, list[int]] = {str(d): [] for d in range(10)}
+        for idx, draw in enumerate(history_draws):
+            seen_in_draw: set[str] = set()
+            for src in ("lao_last2", "lao_last4"):
+                v = str(draw.get(src) or "")
+                for ch in v:
+                    if ch.isdigit():
+                        seen_in_draw.add(ch)
+            for ch in seen_in_draw:
+                positions.setdefault(ch, []).append(idx)
+        for ds, pos in positions.items():
+            if not pos:
+                gap_scores[ds] = float(len(history_draws))
+                continue
+            current_gap = float(pos[0])
+            if len(pos) >= 2:
+                diffs = [pos[i + 1] - pos[i] for i in range(len(pos) - 1)]
+                avg_gap = sum(diffs) / len(diffs)
+            else:
+                avg_gap = max(1.0, float(len(history_draws)))
+            gap_scores[ds] = current_gap / max(1.0, avg_gap)
+
     for d in range(10):
         ds = str(d)
         score = 0.0
-        score += freq_30d.get(ds, 0) * 1.0
-        score += freq_7d.get(ds, 0) * 2.0
-        score += digit_counts.get(ds, 0) * 0.5
+        score += freq_30d.get(ds, 0) * weights_used["freq_30d"]
+        score += freq_7d.get(ds, 0) * weights_used["freq_7d"]
+        score += digit_counts.get(ds, 0) * weights_used["digit_count"]
         if latest_last_digit and latest_last_digit in transitions:
-            score += transitions[latest_last_digit].get(ds, 0) * 10.0
+            score += transitions[latest_last_digit].get(ds, 0) * weights_used["markov"]
+        score += gap_scores.get(ds, 0.0) * weights_used["gap"]
         digit_scores[ds] = score
 
     top_digits = sorted(digit_scores.items(), key=lambda kv: kv[1], reverse=True)
     top_1d = [d for d, _ in top_digits[:3]]
 
-    top_2d = []
-    seen_2d = set()
-    for d1, _ in top_digits[:5]:
-        for d2, _ in top_digits[:5]:
-            num = f"{d1}{d2}"
-            if num not in seen_2d:
-                seen_2d.add(num)
-                top_2d.append(num)
+    top_2d: list[str] = []
+    if weights_used["pair"]:
+        pair_counts: dict[str, int] = {}
+        for draw in history_draws[:14]:
+            last2 = str(draw.get("lao_last2") or "")
+            if len(last2) == 2 and last2.isdigit():
+                pair_counts[last2] = pair_counts.get(last2, 0) + 1
+        candidates: list[tuple[str, float]] = []
+        top_digit_scores = dict(top_digits)
+        for d1, _ in top_digits[:5]:
+            for d2, _ in top_digits[:5]:
+                num = f"{d1}{d2}"
+                score = top_digit_scores.get(d1, 0.0) + top_digit_scores.get(d2, 0.0)
+                score += pair_counts.get(num, 0) * weights_used["pair"]
+                candidates.append((num, score))
+        top_2d = [num for num, _ in sorted(candidates, key=lambda kv: kv[1], reverse=True)[:4]]
+    else:
+        seen_2d: set[str] = set()
+        for d1, _ in top_digits[:5]:
+            for d2, _ in top_digits[:5]:
+                num = f"{d1}{d2}"
+                if num not in seen_2d:
+                    seen_2d.add(num)
+                    top_2d.append(num)
+                if len(top_2d) >= 4:
+                    break
             if len(top_2d) >= 4:
                 break
-        if len(top_2d) >= 4:
-            break
 
-    top_3d = []
-    seen_3d = set()
+    top_3d: list[str] = []
+    seen_3d: set[str] = set()
     for d1, _ in top_digits[:4]:
         for d2, _ in top_digits[:4]:
             for d3, _ in top_digits[:4]:
@@ -526,11 +634,33 @@ def predict_v6(payload):
         if len(top_3d) >= 2:
             break
 
+    return {
+        "1d": top_1d,
+        "2d": top_2d,
+        "3d": top_3d,
+        "scores": {d: round(s, 2) for d, s in top_digits[:5]},
+        "weights_used": weights_used,
+    }
+
+
+def predict_v6(payload):
+    region = payload.get("region", "lao")
+    if region != "lao":
+        return {"error": "v6 engine currently supports only lao", "region": region}
+    draws = fetch_lao_draws(100)
+    if not draws:
+        return {"error": "no draw data available", "region": region}
+
+    picks = _v6_compute(draws, payload.get("weights"))
+    top_1d = picks["1d"]
+    top_2d = picks["2d"]
+    top_3d = picks["3d"]
+    scores_top = picks["scores"]
+
     target_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    scores_top = {d: round(s, 2) for d, s in top_digits[:5]}
 
     if payload.get("save", True):
-        _save_v6_prediction(target_date, top_1d, top_2d, top_3d, scores_top)
+        _save_v6_prediction(target_date, top_1d, top_2d, top_3d, scores_top, is_backfill=False, force=True)
 
     return {
         "engine": "Engine v6 (ensemble)",
@@ -540,6 +670,285 @@ def predict_v6(payload):
         "2d_secondary": [],
         "3d": top_3d,
         "scores": scores_top,
+        "weights_used": picks.get("weights_used", DEFAULT_V6_WEIGHTS),
+    }
+
+
+def _load_lao_backtest_rows() -> list[dict[str, Any]] | None:
+    return _lao_db_query(
+        """
+        SELECT draw_date, lao_last4, lao_last2, lao_last3
+        FROM draws
+        WHERE status = 'drawn' AND lao_last2 IS NOT NULL
+        ORDER BY draw_date ASC
+        """,
+        (),
+    )
+
+
+def _run_v6_backtest_rows(
+    rows: list[dict[str, Any]],
+    *,
+    region: str,
+    days: int,
+    min_history: int,
+    dry_run: bool,
+    force: bool,
+    weights: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    weights_used = _normalize_v6_weights(weights)
+    if not rows:
+        return {"error": "no drawn results available"}
+
+    total_draws = len(rows)
+    if total_draws <= min_history:
+        return {
+            "error": f"need >{min_history} drawn results to backtest, have {total_draws}",
+            "total_draws_available": total_draws,
+            "min_history": min_history,
+        }
+
+    if days > 0:
+        start_idx = max(min_history, total_draws - days)
+    else:
+        start_idx = min_history
+
+    eligible = total_draws - start_idx
+    inserted = updated = skipped = failed = 0
+    hits_1d = hits_2d = hits_3d = 0
+    samples: list[dict[str, Any]] = []
+
+    for i in range(start_idx, total_draws):
+        target = rows[i]
+        target_date_str = str(target.get("draw_date") or "")
+        history = list(reversed(rows[:i]))  # DESC: latest-first
+
+        picks = _v6_compute(history, weights_used)
+        p1 = picks["1d"]
+        p2 = picks["2d"]
+        p3 = picks["3d"]
+
+        last2 = str(target.get("lao_last2") or "").strip()
+        last3 = str(target.get("lao_last3") or "").strip()
+        hit1 = any(d in last2 for d in p1 if d)
+        hit2 = any(n == last2 for n in p2 if n)
+        hit3 = any(n == last3 for n in p3 if n)
+        if hit1:
+            hits_1d += 1
+        if hit2:
+            hits_2d += 1
+        if hit3:
+            hits_3d += 1
+
+        if not dry_run:
+            status = _save_v6_prediction(
+                target_date_str, p1, p2, p3, picks["scores"],
+                is_backfill=True, force=force,
+            )
+            if status == "inserted":
+                inserted += 1
+            elif status == "updated":
+                updated += 1
+            elif status == "skipped":
+                skipped += 1
+            else:
+                failed += 1
+
+        samples.append({
+            "date": target_date_str,
+            "picks_1d": p1,
+            "picks_2d": p2[:3],
+            "picks_3d": p3[:2],
+            "actual_last2": last2,
+            "actual_last3": last3,
+            "hit_1d": hit1,
+            "hit_2d": hit2,
+            "hit_3d": hit3,
+        })
+
+    return {
+        "region": region,
+        "dry_run": dry_run,
+        "force": force,
+        "weights_used": weights_used,
+        "total_draws_available": total_draws,
+        "min_history": min_history,
+        "eligible_draws": eligible,
+        "inserted": inserted,
+        "updated": updated,
+        "skipped_existing": skipped,
+        "failed": failed,
+        "date_range": [str(rows[start_idx].get("draw_date") or ""), str(rows[-1].get("draw_date") or "")] if eligible else None,
+        "backtest_accuracy": {
+            "total": eligible,
+            "hits_1d": hits_1d,
+            "hits_2d": hits_2d,
+            "hits_3d": hits_3d,
+            "hit_rate_1d": round(hits_1d / eligible, 4) if eligible else 0.0,
+            "hit_rate_2d": round(hits_2d / eligible, 4) if eligible else 0.0,
+            "hit_rate_3d": round(hits_3d / eligible, 4) if eligible else 0.0,
+        },
+        "samples": samples[-20:],
+    }
+
+
+def backtest_v6(payload: dict[str, Any]) -> dict[str, Any]:
+    """Replay v6 engine against historical draws and (optionally) backfill v6_prediction_log.
+
+    Payload keys:
+      - region: only 'lao' supported (default)
+      - days: how many recent draws to evaluate (default 60, 0 = all)
+      - min_history: minimum draws needed before predicting (default 30)
+      - dry_run: if true, compute results without writing to DB (default false)
+      - force: if true, overwrite existing predictions for those dates (default false)
+
+    Returns a summary including backtest hit rates and per-date samples.
+    """
+    region = payload.get("region", "lao")
+    if region != "lao":
+        return {"error": "backtest only supports lao", "region": region}
+
+    days = max(0, min(365, int(payload.get("days", 60))))
+    min_history = max(10, min(180, int(payload.get("min_history", 30))))
+    dry_run = bool(payload.get("dry_run", False))
+    force = bool(payload.get("force", False))
+    weights = payload.get("weights") if isinstance(payload.get("weights"), dict) else None
+    weights_used = _normalize_v6_weights(weights)
+    if not dry_run and weights_used != DEFAULT_V6_WEIGHTS:
+        return {"error": "custom weights are dry-run only; refusing to write tuned backfill rows", "weights_used": weights_used}
+
+    rows = _load_lao_backtest_rows()
+    if rows is None:
+        return {"error": "DB unavailable"}
+    return _run_v6_backtest_rows(
+        rows,
+        region=region,
+        days=days,
+        min_history=min_history,
+        dry_run=dry_run,
+        force=force,
+        weights=weights_used,
+    )
+
+
+def _grid_candidates(grid: dict[str, Any]) -> list[dict[str, float]]:
+    keys = [key for key in DEFAULT_V6_WEIGHTS if isinstance(grid.get(key), list) and grid.get(key)]
+    if not keys:
+        return [dict(DEFAULT_V6_WEIGHTS)]
+    value_lists: list[list[float]] = []
+    for key in keys:
+        values: list[float] = []
+        for raw in grid.get(key, []):
+            try:
+                values.append(max(-100.0, min(100.0, float(raw))))
+            except (TypeError, ValueError):
+                continue
+        if not values:
+            values = [DEFAULT_V6_WEIGHTS[key]]
+        value_lists.append(values[:8])
+    candidates: list[dict[str, float]] = []
+    for combo in product(*value_lists):
+        weights = dict(DEFAULT_V6_WEIGHTS)
+        for idx, key in enumerate(keys):
+            weights[key] = combo[idx]
+        candidates.append(weights)
+        if len(candidates) >= 64:
+            break
+    return candidates
+
+
+def _preset_grid(name: str) -> dict[str, list[float]]:
+    if name == "fine":
+        return {
+            "freq_30d": [0.9, 1.1],
+            "freq_7d": [1.8, 2.2],
+            "digit_count": [0.4, 0.6],
+            "markov": [8.0, 12.0],
+            "gap": [0.0, 0.5],
+            "pair": [0.0],
+        }
+    return {
+        "freq_30d": [0.8, 1.2],
+        "freq_7d": [1.5, 2.5],
+        "digit_count": [0.3, 0.7],
+        "markov": [6.0, 12.0],
+        "gap": [0.0, 0.8],
+        "pair": [0.0, 1.5],
+    }
+
+
+def sweep_v6_weights(payload: dict[str, Any]) -> dict[str, Any]:
+    region = payload.get("region", "lao")
+    if region != "lao":
+        return {"error": "sweep only supports lao", "region": region}
+
+    days = max(30, min(365, int(payload.get("days", 90))))
+    min_history = max(10, min(180, int(payload.get("min_history", 30))))
+    top_k = max(1, min(10, int(payload.get("top_k", 5))))
+    preset = str(payload.get("preset") or "coarse")
+    grid = payload.get("sweep_grid") if isinstance(payload.get("sweep_grid"), dict) else _preset_grid(preset)
+    candidates = _grid_candidates(grid)
+    if len(candidates) > 64:
+        return {"error": "sweep grid too large", "candidate_count": len(candidates), "max_candidates": 64}
+
+    rows = _load_lao_backtest_rows()
+    if rows is None:
+        return {"error": "DB unavailable"}
+
+    baseline = _run_v6_backtest_rows(
+        rows,
+        region=region,
+        days=days,
+        min_history=min_history,
+        dry_run=True,
+        force=False,
+        weights=DEFAULT_V6_WEIGHTS,
+    )
+
+    results: list[dict[str, Any]] = []
+    for idx, weights in enumerate(candidates):
+        result = _run_v6_backtest_rows(
+            rows,
+            region=region,
+            days=days,
+            min_history=min_history,
+            dry_run=True,
+            force=False,
+            weights=weights,
+        )
+        acc = result.get("backtest_accuracy", {}) if isinstance(result, dict) else {}
+        results.append({
+            "rank": 0,
+            "index": idx,
+            "weights": weights,
+            "accuracy": acc,
+            "date_range": result.get("date_range") if isinstance(result, dict) else None,
+        })
+
+    results.sort(
+        key=lambda item: (
+            item.get("accuracy", {}).get("hits_1d", 0),
+            item.get("accuracy", {}).get("hit_rate_1d", 0.0),
+            item.get("accuracy", {}).get("hits_2d", 0),
+            item.get("accuracy", {}).get("hit_rate_2d", 0.0),
+        ),
+        reverse=True,
+    )
+    for idx, item in enumerate(results, 1):
+        item["rank"] = idx
+
+    return {
+        "region": region,
+        "preset": preset,
+        "days": days,
+        "min_history": min_history,
+        "candidates_evaluated": len(candidates),
+        "baseline": {
+            "weights": DEFAULT_V6_WEIGHTS,
+            "accuracy": baseline.get("backtest_accuracy", {}) if isinstance(baseline, dict) else {},
+            "date_range": baseline.get("date_range") if isinstance(baseline, dict) else None,
+        },
+        "top": results[:top_k],
     }
 
 
@@ -850,6 +1259,77 @@ def latest_prediction(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_prediction_statuses(value: Any = None) -> list[str]:
+    statuses: list[str] = []
+    if isinstance(value, str):
+        raw_values = [value]
+    elif isinstance(value, list):
+        raw_values = value
+    else:
+        raw_values = ["locked", "published"]
+    for raw in raw_values:
+        status = str(raw or "").strip()
+        if status and all(ch.isalnum() or ch in {"_", "-"} for ch in status):
+            statuses.append(status)
+    return statuses[:8] or ["locked"]
+
+
+def _v5_data_status(last_n: int, statuses: list[str]) -> dict[str, Any]:
+    window_days = max(30, min(365, int(last_n)))
+    status_rows = _lao_db_query(
+        """
+        SELECT p.status,
+               COUNT(*)::int AS total,
+               COUNT(*) FILTER (WHERE d.lao_last2 IS NOT NULL)::int AS joined
+        FROM predictions p
+        LEFT JOIN draws d ON d.draw_date = p.target_draw_date AND d.status = 'drawn'
+        WHERE p.target_draw_date >= (CURRENT_DATE - (%s || ' days')::interval)
+        GROUP BY p.status
+        ORDER BY total DESC
+        """,
+        (window_days,),
+    ) or []
+    item_rows = _lao_db_query(
+        """
+        SELECT COUNT(*)::int AS item_count
+        FROM prediction_items pi
+        JOIN predictions p ON p.id = pi.prediction_id
+        WHERE p.status = ANY(%s::text[])
+          AND p.target_draw_date >= (CURRENT_DATE - (%s || ' days')::interval)
+          AND pi.is_rejected = false
+        """,
+        (statuses, window_days),
+    ) or []
+    null_draw_rows = _lao_db_query(
+        """
+        SELECT COUNT(*)::int AS null_draw_count
+        FROM draws
+        WHERE status = 'drawn'
+          AND lao_last2 IS NULL
+          AND draw_date >= (CURRENT_DATE - (%s || ' days')::interval)
+        """,
+        (window_days,),
+    ) or []
+    breakdown = {
+        str(row.get("status") or "unknown"): {
+            "total": int(row.get("total") or 0),
+            "joined": int(row.get("joined") or 0),
+        }
+        for row in status_rows
+    }
+    joined_active = sum(value["joined"] for key, value in breakdown.items() if key in statuses)
+    total_active = sum(value["total"] for key, value in breakdown.items() if key in statuses)
+    return {
+        "window_days": window_days,
+        "active_statuses": statuses,
+        "status_breakdown": breakdown,
+        "joined_active": joined_active,
+        "total_active": total_active,
+        "prediction_items_active": int((item_rows[0] if item_rows else {}).get("item_count") or 0),
+        "drawn_null_last2": int((null_draw_rows[0] if null_draw_rows else {}).get("null_draw_count") or 0),
+    }
+
+
 def accuracy_stats(payload: dict[str, Any]) -> dict[str, Any]:
     """Compute hit-rate per bet_type over the last N completed draws.
 
@@ -865,27 +1345,30 @@ def accuracy_stats(payload: dict[str, Any]) -> dict[str, Any]:
     """
     region = payload.get("region", "lao")
     last_n = int(payload.get("last_n", 30))
+    statuses = _normalize_prediction_statuses(payload.get("statuses"))
 
     if region != "lao":
         return {"error": f"region {region} ไม่รองรับ accuracy_stats"}
 
+    data_status = _v5_data_status(last_n, statuses)
     rows = _lao_db_query(
         """
-        SELECT p.id, p.target_draw_date, d.lao_last2, d.lao_last3
+        SELECT p.id, p.target_draw_date, p.status, d.lao_last2, d.lao_last3
         FROM predictions p
         JOIN draws d ON d.draw_date = p.target_draw_date
-        WHERE p.status = 'locked' AND d.status = 'drawn'
+        WHERE p.status = ANY(%s::text[]) AND d.status = 'drawn'
               AND d.lao_last2 IS NOT NULL
         ORDER BY p.target_draw_date DESC
         LIMIT %s
         """,
-        (last_n,),
+        (statuses, last_n),
     )
     if rows is None:
         return {"error": "DB unavailable"}
     if not rows:
         return {"hit_rate": 0.0, "hits": 0, "total": 0, "by_bet_type": {},
-                "streak": 0, "last_hit_date": None, "window": last_n}
+                "streak": 0, "last_hit_date": None, "window": last_n,
+                "statuses": statuses, "v5_data_status": data_status}
 
     by_bt = {"1d": {"hits": 0, "total": 0}, "2d": {"hits": 0, "total": 0},
              "3d": {"hits": 0, "total": 0}}
@@ -948,6 +1431,8 @@ def accuracy_stats(payload: dict[str, Any]) -> dict[str, Any]:
                         for k, v in by_bt.items()},
         "streak": streak,
         "last_hit_date": last_hit_date,
+        "statuses": statuses,
+        "v5_data_status": data_status,
     }
 
 
@@ -1083,31 +1568,77 @@ def get_active_engine(payload: dict) -> dict:
     Otherwise returns v5_3.
     """
     region = payload.get("region", "lao")
-    v6_acc = accuracy_v6({"last_n": 30})
-    v5_acc = accuracy_stats({"region": region, "last_n": 30})
+    last_n = int(payload.get("last_n", 30))
+    statuses = _normalize_prediction_statuses(payload.get("statuses"))
+    min_draws = int(payload.get("min_v6_draws", 5))
+    min_streak = int(payload.get("min_v6_streak_1d", 3))
+    v6_acc = accuracy_v6({"last_n": last_n})
+    v5_acc = accuracy_stats({"region": region, "last_n": last_n, "statuses": statuses})
 
-    v6_total = v6_acc.get("total", 0)
-    if v6_total < 5:
-        return {"engine": "v5_3", "reason": f"v6 only has {v6_total} draws (need >=5)"}
+    v6_total = int(v6_acc.get("total", 0) or 0)
+    v6_rate = float(v6_acc.get("hit_rate_1d", 0.0) or 0.0)
+    v5_rate = float(v5_acc.get("by_bet_type", {}).get("1d", {}).get("rate", 0.0) or 0.0)
+    streak = int(v6_acc.get("streak_1d", 0) or 0)
 
-    v6_rate = v6_acc.get("hit_rate_1d", 0.0)
-    v5_rate = v5_acc.get("by_bet_type", {}).get("1d", {}).get("rate", 0.0)
-    streak = v6_acc.get("streak_1d", 0)
+    gates = {
+        "data": {
+            "ok": v6_total >= min_draws,
+            "actual": v6_total,
+            "required": min_draws,
+        },
+        "rate": {
+            "ok": v6_rate > v5_rate,
+            "v6_hit_rate_1d": v6_rate,
+            "v5_hit_rate_1d": v5_rate,
+        },
+        "streak": {
+            "ok": streak >= min_streak,
+            "actual": streak,
+            "required": min_streak,
+        },
+    }
 
-    if v6_rate > v5_rate and streak >= 3:
+    if not gates["data"]["ok"]:
         return {
-            "engine": "v6",
-            "reason": f"v6 hit_rate_1d={v6_rate:.1%} > v5={v5_rate:.1%}, streak={streak}",
+            "engine": "v5_3",
+            "reason": f"data gate failed: v6 has {v6_total} evaluated draws, requires >={min_draws}",
+            "gates": gates,
+            "accuracy": {"v5_3": v5_acc, "v6": v6_acc},
+            "v5_data_status": v5_acc.get("v5_data_status"),
         }
+
+    if not gates["rate"]["ok"]:
+        return {
+            "engine": "v5_3",
+            "reason": f"rate gate failed: v6 1D hit_rate={v6_rate:.1%} must be > v5={v5_rate:.1%}",
+            "gates": gates,
+            "accuracy": {"v5_3": v5_acc, "v6": v6_acc},
+            "v5_data_status": v5_acc.get("v5_data_status"),
+        }
+
+    if not gates["streak"]["ok"]:
+        return {
+            "engine": "v5_3",
+            "reason": f"streak gate failed: v6 1D streak={streak}, requires >={min_streak}",
+            "gates": gates,
+            "accuracy": {"v5_3": v5_acc, "v6": v6_acc},
+            "v5_data_status": v5_acc.get("v5_data_status"),
+        }
+
     return {
-        "engine": "v5_3",
-        "reason": f"v6 hit_rate_1d={v6_rate:.1%} <= v5={v5_rate:.1%} or streak={streak}<3",
+        "engine": "v6",
+        "reason": f"all gates passed: v6 hit_rate_1d={v6_rate:.1%} > v5={v5_rate:.1%}, streak={streak}",
+        "gates": gates,
+        "accuracy": {"v5_3": v5_acc, "v6": v6_acc},
+        "v5_data_status": v5_acc.get("v5_data_status"),
     }
 
 
 ACTIONS: dict[str, callable] = {
     "predict": predict,
     "predict_v6": predict_v6,
+    "backtest_v6": backtest_v6,
+    "sweep_v6_weights": sweep_v6_weights,
     "accuracy_v6": accuracy_v6,
     "get_active_engine": get_active_engine,
     "compare_engines": compare_engines,
