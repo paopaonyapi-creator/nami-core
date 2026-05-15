@@ -14,7 +14,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -72,6 +72,13 @@ def _audit_log(worker: str, action: str, caller_ip: str, ok: bool, latency_ms: f
 class DispatchRequest(BaseModel):
     worker: str
     action: str
+    payload: dict[str, Any] = {}
+    approved: bool = False
+
+class RuntimeToolInvokeRequest(BaseModel):
+    worker: str = ""
+    action: str = ""
+    tool: str = ""
     payload: dict[str, Any] = {}
     approved: bool = False
 
@@ -150,7 +157,26 @@ class Metrics:
             metric_type = "counter" if "total" in key else "gauge"
             lines.append(f"# TYPE {key} {metric_type}")
             lines.append(f"{key} {value}")
+        lines.extend(BridgeMetrics.prometheus_lines())
         return "\n".join(lines) + "\n"
+
+
+class BridgeMetrics:
+    calls: dict[tuple[str, str], int] = {}
+
+    @classmethod
+    def record(cls, from_path: str, to_path: str) -> None:
+        key = (from_path, to_path)
+        cls.calls[key] = cls.calls.get(key, 0) + 1
+
+    @classmethod
+    def prometheus_lines(cls) -> list[str]:
+        lines = ["# TYPE nami_bridge_calls_total counter"]
+        for (from_path, to_path), count in sorted(cls.calls.items()):
+            lines.append(f'nami_bridge_calls_total{{from_path="{from_path}",to_path="{to_path}"}} {count}')
+        if not cls.calls:
+            lines.append('nami_bridge_calls_total{from_path="none",to_path="none"} 0')
+        return lines
 
 
 # ── WebSocket manager ──
@@ -296,6 +322,16 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         trace_id = os.urandom(16).hex()
         span_id = os.urandom(8).hex()
         return f"00-{trace_id}-{span_id}-01"
+
+    def _tool_parts(req: RuntimeToolInvokeRequest) -> tuple[str, str, str]:
+        if req.tool:
+            if "." not in req.tool:
+                raise HTTPException(status_code=400, detail="tool must use worker.action format")
+            worker, action = req.tool.split(".", 1)
+            return worker, action, req.tool
+        if not req.worker or not req.action:
+            raise HTTPException(status_code=400, detail="worker/action or tool required")
+        return req.worker, req.action, f"{req.worker}.{req.action}"
 
     def _enqueue_job(worker: str, action: str, payload: dict[str, Any]) -> tuple[str, bool, str]:
         action_name = f"{worker}.{action}"
@@ -570,9 +606,21 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             raise HTTPException(status_code=502, detail=str(exc))
 
     @app.post("/runtime/tools/invoke")
-    async def runtime_tool_invoke(req: DispatchRequest, request: Request, authorization: str = Header(default="")):
+    async def runtime_tool_invoke(
+        req: RuntimeToolInvokeRequest,
+        request: Request,
+        response: Response,
+        authorization: str = Header(default=""),
+        x_nami_bridge_from: str = Header(default=""),
+    ):
         Metrics.request_count += 1
-        tool_name = f"{req.worker}.{req.action}"
+        if x_nami_bridge_from == "dispatchWorker":
+            # expiry: 2026-06-30
+            if os.environ.get("NAMI_BRIDGE_B2", "on") == "off":
+                raise HTTPException(status_code=410, detail="dispatchWorker bridge disabled")
+            BridgeMetrics.record("dispatchWorker", "runtime.tools.invoke")
+            response.headers["Deprecation"] = "2026-06-30"
+        worker, action, tool_name = _tool_parts(req)
         tool = app.state.tool_registry.get(tool_name)
         if tool is None:
             raise HTTPException(status_code=404, detail=f"tool not registered: {tool_name}")
@@ -588,24 +636,40 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
                 raise HTTPException(status_code=403, detail="approval required")
         if decision == "deny":
             raise HTTPException(status_code=403, detail="tool denied by policy")
+        if tool_name in app.state.queue_actions:
+            t0 = time.monotonic()
+            try:
+                job_id, idempotent, status = _enqueue_job(worker, action, req.payload)
+                latency = (time.monotonic() - t0) * 1000
+                Metrics.record_dispatch(latency)
+                _audit_log(worker, action, request.client.host if request.client else "-", True, latency)
+                queued = RuntimeEvent(type="tool.queued", job_id=job_id, data={"tool": tool_name, "status": status, "idempotent": idempotent})
+                record_runtime_event(queued)
+                await ws_manager.broadcast("runtime.event", queued.to_dict())
+                return {"ok": True, "job_id": job_id, "status": status, "idempotent": idempotent, "latency_ms": round(latency, 1)}
+            except Exception as exc:
+                Metrics.record_error()
+                _audit_log(worker, action, request.client.host if request.client else "-", False, 0)
+                if not app.state.sync_fallback_enabled:
+                    raise HTTPException(status_code=503, detail=f"queue unavailable: {exc}")
         job = app.state.runtime_jobs.create(tool_name, json.dumps(req.payload, ensure_ascii=False, default=str)[:240])
         job.status = "running"
         job.updated_at = datetime.now(timezone.utc).isoformat()
         started = RuntimeEvent(type="tool.started", job_id=job.id, data={"tool": tool_name})
         job.progress_events.append(started)
-        job.audit_entries.append({"event": "tool.started", "worker": req.worker, "action": req.action, "ok": None, "timestamp": started.timestamp})
+        job.audit_entries.append({"event": "tool.started", "worker": worker, "action": action, "ok": None, "timestamp": started.timestamp})
         app.state.runtime_jobs.save(job)
         record_runtime_event(started)
         try:
             snapshot_before = capture_git_worktree_snapshot() if tool.permission_level == "mutating" else None
             t0 = time.monotonic()
-            result = app.state.hermes.dispatch(req.worker, req.action, req.payload)
+            result = app.state.hermes.dispatch(worker, action, req.payload)
             latency = (time.monotonic() - t0) * 1000
             snapshot_after = capture_git_worktree_snapshot() if snapshot_before is not None else None
             diagnostic_checks = run_runtime_diagnostics() if snapshot_before is not None else None
             diagnostics = build_mutating_tool_diagnostics(snapshot_before, snapshot_after, diagnostic_checks) if snapshot_before is not None and snapshot_after is not None else None
             Metrics.record_dispatch(latency)
-            _audit_log(req.worker, req.action, request.client.host if request.client else "-", True, latency)
+            _audit_log(worker, action, request.client.host if request.client else "-", True, latency)
             job.status = "completed"
             job.updated_at = datetime.now(timezone.utc).isoformat()
             job.result = {"ok": True, "output": result.output, "latency_ms": round(latency, 1)}
@@ -614,7 +678,7 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
                 job.result["diagnostics"] = diagnostics
             completed = RuntimeEvent(type="job.completed", job_id=job.id, data=job.result)
             job.progress_events.append(RuntimeEvent(type="tool.completed", job_id=job.id, data=job.result))
-            completed_audit = {"event": "tool.completed", "worker": req.worker, "action": req.action, "ok": True, "latency_ms": round(latency, 1), "timestamp": completed.timestamp}
+            completed_audit = {"event": "tool.completed", "worker": worker, "action": action, "ok": True, "latency_ms": round(latency, 1), "timestamp": completed.timestamp}
             if diagnostics is not None:
                 completed_audit["diagnostics"] = diagnostics
             job.audit_entries.append(completed_audit)
@@ -624,25 +688,25 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             return {"ok": True, "job": job.to_dict(), "output": result.output, "latency_ms": round(latency, 1)}
         except ValueError as exc:
             Metrics.record_error()
-            _audit_log(req.worker, req.action, request.client.host if request.client else "-", False, 0)
+            _audit_log(worker, action, request.client.host if request.client else "-", False, 0)
             job.status = "failed"
             job.updated_at = datetime.now(timezone.utc).isoformat()
             job.error = str(exc)
             failed = RuntimeEvent(type="job.failed", job_id=job.id, data={"error": str(exc)})
             job.progress_events.append(RuntimeEvent(type="tool.failed", job_id=job.id, data={"error": str(exc)}))
-            job.audit_entries.append({"event": "tool.failed", "worker": req.worker, "action": req.action, "ok": False, "error": str(exc), "timestamp": failed.timestamp})
+            job.audit_entries.append({"event": "tool.failed", "worker": worker, "action": action, "ok": False, "error": str(exc), "timestamp": failed.timestamp})
             app.state.runtime_jobs.save(job)
             record_runtime_event(failed)
             raise HTTPException(status_code=404, detail=str(exc))
         except Exception as exc:
             Metrics.record_error()
-            _audit_log(req.worker, req.action, request.client.host if request.client else "-", False, 0)
+            _audit_log(worker, action, request.client.host if request.client else "-", False, 0)
             job.status = "failed"
             job.updated_at = datetime.now(timezone.utc).isoformat()
             job.error = str(exc)
             failed = RuntimeEvent(type="job.failed", job_id=job.id, data={"error": str(exc)})
             job.progress_events.append(RuntimeEvent(type="tool.failed", job_id=job.id, data={"error": str(exc)}))
-            job.audit_entries.append({"event": "tool.failed", "worker": req.worker, "action": req.action, "ok": False, "error": str(exc), "timestamp": failed.timestamp})
+            job.audit_entries.append({"event": "tool.failed", "worker": worker, "action": action, "ok": False, "error": str(exc), "timestamp": failed.timestamp})
             app.state.runtime_jobs.save(job)
             record_runtime_event(failed)
             raise HTTPException(status_code=500, detail=str(exc))
@@ -801,8 +865,13 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         )
 
     @app.post("/dispatch", response_model=DispatchResponse)
-    async def dispatch(req: DispatchRequest, request: Request, _auth: str = Depends(verify_api_key)):
+    async def dispatch(req: DispatchRequest, request: Request, response: Response, _auth: str = Depends(verify_api_key)):
         Metrics.request_count += 1
+        # expiry: 2026-07-15
+        if os.environ.get("NAMI_BRIDGE_B1", "on") == "off":
+            raise HTTPException(status_code=410, detail="legacy /dispatch bridge disabled")
+        BridgeMetrics.record("dispatch", "runtime.tools.invoke")
+        response.headers["Deprecation"] = "2026-07-15"
         ip = request.client.host if request.client else "-"
         if not dispatch_limiter.is_allowed(ip):
             raise HTTPException(status_code=429, detail="rate limit exceeded")

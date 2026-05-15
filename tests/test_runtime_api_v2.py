@@ -74,6 +74,23 @@ def test_runtime_tool_invoke_creates_completed_job():
     assert jobs[0]["audit_entries"][1]["ok"] is True
 
 
+def test_runtime_tool_invoke_accepts_tool_shape_and_records_bridge_metric():
+    client = _client()
+    response = client.post(
+        "/runtime/tools/invoke",
+        headers={"X-Nami-Bridge-From": "dispatchWorker"},
+        json={"tool": "status.health", "payload": {}},
+    )
+    assert response.status_code == 200
+    assert response.headers["Deprecation"] == "2026-06-30"
+    data = response.json()
+    assert data["ok"] is True
+    assert data["job"]["requested_action"] == "status.health"
+
+    metrics = client.get("/metrics/prometheus").text
+    assert 'nami_bridge_calls_total{from_path="dispatchWorker",to_path="runtime.tools.invoke"} 1' in metrics
+
+
 def test_runtime_events_test_stream_returns_ready_event():
     client = _client()
     response = client.get("/runtime/events?test=true")
