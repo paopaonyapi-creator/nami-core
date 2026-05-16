@@ -240,6 +240,7 @@ class AgentLoop:
         plan_hashes: list[str] = []
         action_payloads: list[tuple[str, str]] = []
         roles: list[str] = []
+        plan_costs: list[float] = []
         last_plan: dict[str, Any] | None = None
         last_tool_output: Any = None
         last_tool_output_schema: Any = None
@@ -253,6 +254,8 @@ class AgentLoop:
                 plan_hashes.append(_sha256_json(payload))
                 last_plan = {"tool": step.tool, "args": step.tool_args, "content": step.content}
                 roles.append(self.agent_role)
+                if step.cost_usd:
+                    plan_costs.append(float(step.cost_usd))
             elif step.kind == "act" and step.tool is not None:
                 action_payloads.append((step.tool, _sha256_json(step.tool_args or {})))
                 if step.tool_result is not None:
@@ -272,6 +275,8 @@ class AgentLoop:
             tool_output=last_tool_output if phase == "post_act" else None,
             tool_output_schema=last_tool_output_schema if phase == "post_act" else None,
             role_history=roles,
+            iter_cost_history=plan_costs,
+            iter_budget_total=float(self.budget.max_cost_usd),
         )
 
     def _step(self, span_name: str, state: AgentState, fn: Callable[[AgentState], AgentState]) -> None:

@@ -250,3 +250,50 @@ def test_d12_does_not_fire_below_threshold_with_default_estimator() -> None:
 
     counts = get_detection_counts()
     assert counts.get(("D12", "truncate"), 0) == 0
+
+
+def test_d5_fires_when_plan_costs_are_front_loaded() -> None:
+    """D5: 80% of cost in first 20% of iterations → alert (non-terminal)."""
+    reset_detection_counts()
+    # 5 plan steps: first carries 0.40 USD, rest 0.01 each.
+    # Final 'done' step closes the loop without generating cost.
+    decisions = [
+        PlanDecision(action="tool", tool="echo", tool_args={"i": 0}, cost_usd=0.40),
+        PlanDecision(action="tool", tool="echo", tool_args={"i": 1}, cost_usd=0.01),
+        PlanDecision(action="tool", tool="echo", tool_args={"i": 2}, cost_usd=0.01),
+        PlanDecision(action="tool", tool="echo", tool_args={"i": 3}, cost_usd=0.01),
+        PlanDecision(action="tool", tool="echo", tool_args={"i": 4}, cost_usd=0.01),
+        PlanDecision(action="done", final_answer="ok"),
+    ]
+    planner = _ScriptedPlanner(decisions)
+    loop = AgentLoop(
+        planner=planner,
+        registry=_registry_with_echo(),
+        safety_runner=DetectorRunner(ALL_DETECTORS),
+    )
+
+    outcome = loop.run(_state())
+
+    assert outcome.halted is False  # D5 is alert-only, must not halt the loop
+    counts = get_detection_counts()
+    assert counts.get(("D5", "alert"), 0) >= 1
+
+
+def test_d5_silent_on_even_cost_distribution() -> None:
+    reset_detection_counts()
+    decisions = [
+        PlanDecision(action="tool", tool="echo", tool_args={"i": i}, cost_usd=0.10)
+        for i in range(5)
+    ] + [PlanDecision(action="done", final_answer="ok")]
+    planner = _ScriptedPlanner(decisions)
+    loop = AgentLoop(
+        planner=planner,
+        registry=_registry_with_echo(),
+        safety_runner=DetectorRunner(ALL_DETECTORS),
+    )
+
+    outcome = loop.run(_state())
+
+    assert outcome.halted is False
+    counts = get_detection_counts()
+    assert counts.get(("D5", "alert"), 0) == 0
