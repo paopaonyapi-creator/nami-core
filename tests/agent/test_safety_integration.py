@@ -6,9 +6,10 @@ from typing import Any
 
 from nami_core.agent.loop import AgentLoop, PlanDecision
 from nami_core.agent.state import AgentState
+from nami_core.agent.tokens import estimate_state_prompt_tokens
 from nami_core.agent.tools import Tool, ToolRegistry, ToolResult
 from nami_core.safety.detectors import ALL_DETECTORS
-from nami_core.safety.runner import DetectorRunner
+from nami_core.safety.runner import DetectorRunner, get_detection_counts, reset_detection_counts
 
 
 class _ScriptedPlanner:
@@ -195,3 +196,57 @@ def test_d9_halts_when_tool_output_fails_registered_schema() -> None:
     assert outcome.halt_reason == "safety:D9:halt_branch"
     assert outcome.state.steps[-1].kind == "halt"
     assert "D9" in outcome.state.steps[-1].content
+
+
+def test_d12_truncate_metric_emits_when_prompt_above_threshold() -> None:
+    reset_detection_counts()
+    planner = _ScriptedPlanner([PlanDecision(action="done", final_answer="ok")])
+    loop = AgentLoop(
+        planner=planner,
+        registry=_registry_with_echo(),
+        safety_runner=DetectorRunner(ALL_DETECTORS),
+        model_context_window=100,
+        prompt_token_estimator=lambda _state: 95,
+    )
+
+    outcome = loop.run(_state())
+
+    assert outcome.halted is False
+    counts = get_detection_counts()
+    assert counts.get(("D12", "truncate"), 0) >= 1
+
+
+def test_d12_does_not_fire_without_estimator() -> None:
+    reset_detection_counts()
+    planner = _ScriptedPlanner([PlanDecision(action="done", final_answer="ok")])
+    loop = AgentLoop(
+        planner=planner,
+        registry=_registry_with_echo(),
+        safety_runner=DetectorRunner(ALL_DETECTORS),
+    )
+
+    state = _state()
+    state.rag_chunks = ["clean chunk"]
+    loop.run(state)
+
+    counts = get_detection_counts()
+    assert counts.get(("D12", "truncate"), 0) == 0
+
+
+def test_d12_does_not_fire_below_threshold_with_default_estimator() -> None:
+    reset_detection_counts()
+    planner = _ScriptedPlanner([PlanDecision(action="done", final_answer="ok")])
+    loop = AgentLoop(
+        planner=planner,
+        registry=_registry_with_echo(),
+        safety_runner=DetectorRunner(ALL_DETECTORS),
+        model_context_window=4096,
+        prompt_token_estimator=estimate_state_prompt_tokens,
+    )
+
+    state = _state()
+    state.goal = "small goal"
+    loop.run(state)
+
+    counts = get_detection_counts()
+    assert counts.get(("D12", "truncate"), 0) == 0

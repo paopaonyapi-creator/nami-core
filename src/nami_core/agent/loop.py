@@ -131,12 +131,14 @@ class AgentLoop:
     on_halt: Callable[[AgentState, str], None] | None = None
     safety_runner: DetectorRunner | None = None
     agent_role: str = "agent"
+    model_context_window: int = 0
+    prompt_token_estimator: Callable[[AgentState], int] | None = None
 
     def run(self, state: AgentState) -> LoopOutcome:
         try:
             while not state.done:
                 enforce_budget(state, self.budget)
-                self._safety_filter_rag(state)
+                self._safety_pre_plan(state)
                 self._step("nami.agent.plan", state, lambda s: plan_node(s, self.planner))
                 if self._safety_halt(state, phase="post_plan"):
                     break
@@ -169,12 +171,27 @@ class AgentLoop:
             final_answer=state.final_answer,
         )
 
-    def _safety_filter_rag(self, state: AgentState) -> None:
-        if self.safety_runner is None or not state.rag_chunks:
+    def _safety_pre_plan(self, state: AgentState) -> None:
+        """Run pre-plan detectors (D6 filter RAG, D12 prompt size)."""
+        if self.safety_runner is None:
             return
-        outcome = self.safety_runner.run(self._build_safety_context(state, phase="pre_plan"))
+        prompt_tokens = self._estimate_prompt_tokens(state)
+        if not state.rag_chunks and prompt_tokens <= 0:
+            return
+        outcome = self.safety_runner.run(
+            self._build_safety_context(state, phase="pre_plan", prompt_tokens=prompt_tokens)
+        )
         if outcome.filtered_chunks is not None:
             state.rag_chunks = list(outcome.filtered_chunks)
+
+    def _estimate_prompt_tokens(self, state: AgentState) -> int:
+        if self.prompt_token_estimator is None or self.model_context_window <= 0:
+            return 0
+        try:
+            value = int(self.prompt_token_estimator(state))
+        except Exception:  # noqa: BLE001 — estimator must never crash the loop
+            return 0
+        return max(0, value)
 
     def _safety_halt(self, state: AgentState, *, phase: str) -> bool:
         """Run safety detectors; emit halt step + return True if any reject/halt fires."""
@@ -202,7 +219,13 @@ class AgentLoop:
             self.on_halt(state, reason)
         return True
 
-    def _build_safety_context(self, state: AgentState, *, phase: str = "post_plan") -> DetectorContext:
+    def _build_safety_context(
+        self,
+        state: AgentState,
+        *,
+        phase: str = "post_plan",
+        prompt_tokens: int = 0,
+    ) -> DetectorContext:
         if phase == "pre_plan":
             return DetectorContext(
                 job_id=state.job_id,
@@ -210,6 +233,8 @@ class AgentLoop:
                 iteration=state.iters,
                 rag_chunks=list(state.rag_chunks),
                 tool_registry=list(self.registry.names()),
+                prompt_tokens=prompt_tokens,
+                model_context_window=self.model_context_window,
             )
 
         plan_hashes: list[str] = []
