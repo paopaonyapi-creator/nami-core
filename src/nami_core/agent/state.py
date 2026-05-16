@@ -25,6 +25,7 @@ class AgentStep:
     tokens_in: int = 0
     tokens_out: int = 0
     error: str | None = None
+    temperature: float = 0.0  # planner sampling temperature (D19 input)
 
 
 @dataclass

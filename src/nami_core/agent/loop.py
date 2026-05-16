@@ -52,6 +52,7 @@ class PlanDecision:
     cost_usd: float = 0.0
     tokens_in: int = 0
     tokens_out: int = 0
+    temperature: float = 0.0  # sampling temperature used (D19 input)
 
 
 class Planner(Protocol):
@@ -76,6 +77,7 @@ def plan_node(state: AgentState, planner: Planner) -> AgentState:
         cost_usd=decision.cost_usd,
         tokens_in=decision.tokens_in,
         tokens_out=decision.tokens_out,
+        temperature=decision.temperature,
     )
     state.add_step(step)
 
@@ -242,6 +244,7 @@ class AgentLoop:
         roles: list[str] = []
         plan_costs: list[float] = []
         last_plan: dict[str, Any] | None = None
+        last_temperature: float = 0.0
         last_tool_output: Any = None
         last_tool_output_schema: Any = None
         for step in state.steps:
@@ -256,6 +259,7 @@ class AgentLoop:
                 roles.append(self.agent_role)
                 if step.cost_usd:
                     plan_costs.append(float(step.cost_usd))
+                last_temperature = float(step.temperature)
             elif step.kind == "act" and step.tool is not None:
                 action_payloads.append((step.tool, _sha256_json(step.tool_args or {})))
                 if step.tool_result is not None:
@@ -277,6 +281,7 @@ class AgentLoop:
             role_history=roles,
             iter_cost_history=plan_costs,
             iter_budget_total=float(self.budget.max_cost_usd),
+            temperature=last_temperature,
         )
 
     def _step(self, span_name: str, state: AgentState, fn: Callable[[AgentState], AgentState]) -> None:

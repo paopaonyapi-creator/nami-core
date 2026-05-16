@@ -297,3 +297,67 @@ def test_d5_silent_on_even_cost_distribution() -> None:
     assert outcome.halted is False
     counts = get_detection_counts()
     assert counts.get(("D5", "alert"), 0) == 0
+
+
+def test_d19_fires_on_repeated_plan_with_nonzero_temperature() -> None:
+    """D19 cache-bypass: same plan rerolled at temperature>0 → alert (non-terminal)."""
+    reset_detection_counts()
+    # Same tool + args twice with temperature=0.7 → identical plan_hash twice.
+    decisions = [
+        PlanDecision(action="tool", tool="echo", tool_args={"x": 1}, temperature=0.7),
+        PlanDecision(action="tool", tool="echo", tool_args={"x": 1}, temperature=0.7),
+        PlanDecision(action="done", final_answer="ok"),
+    ]
+    planner = _ScriptedPlanner(decisions)
+    loop = AgentLoop(
+        planner=planner,
+        registry=_registry_with_echo(),
+        safety_runner=DetectorRunner(ALL_DETECTORS),
+    )
+
+    outcome = loop.run(_state())
+
+    assert outcome.halted is False  # D19 is alert, never halts
+    counts = get_detection_counts()
+    assert counts.get(("D19", "alert"), 0) >= 1
+
+
+def test_d19_silent_on_zero_temperature_repeats() -> None:
+    reset_detection_counts()
+    decisions = [
+        PlanDecision(action="tool", tool="echo", tool_args={"x": 1}, temperature=0.0),
+        PlanDecision(action="tool", tool="echo", tool_args={"x": 1}, temperature=0.0),
+        PlanDecision(action="done", final_answer="ok"),
+    ]
+    planner = _ScriptedPlanner(decisions)
+    loop = AgentLoop(
+        planner=planner,
+        registry=_registry_with_echo(),
+        safety_runner=DetectorRunner(ALL_DETECTORS),
+    )
+
+    outcome = loop.run(_state())
+
+    counts = get_detection_counts()
+    assert counts.get(("D19", "alert"), 0) == 0
+
+
+def test_d19_silent_when_plan_changes_under_high_temperature() -> None:
+    """High temperature + diverse plans → not the cache-bypass shape."""
+    reset_detection_counts()
+    decisions = [
+        PlanDecision(action="tool", tool="echo", tool_args={"x": 1}, temperature=0.7),
+        PlanDecision(action="tool", tool="echo", tool_args={"x": 2}, temperature=0.7),
+        PlanDecision(action="done", final_answer="ok"),
+    ]
+    planner = _ScriptedPlanner(decisions)
+    loop = AgentLoop(
+        planner=planner,
+        registry=_registry_with_echo(),
+        safety_runner=DetectorRunner(ALL_DETECTORS),
+    )
+
+    outcome = loop.run(_state())
+
+    counts = get_detection_counts()
+    assert counts.get(("D19", "alert"), 0) == 0
