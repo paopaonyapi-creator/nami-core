@@ -64,6 +64,10 @@ class TestFastAPIApp(unittest.TestCase):
         text = resp.text
         self.assertIn("# TYPE nami_core_requests_total counter", text)
         self.assertIn("nami_core_workers_count", text)
+        # SAFETY §7.3: nami_safety_detection_total must be exposed even when
+        # no detector has fired yet (stable schema for scrapers).
+        self.assertIn("# TYPE nami_safety_detection_total counter", text)
+        self.assertIn("nami_safety_detection_total", text)
 
     def test_dispatch_no_auth_returns_401(self):
         resp = self.client.post("/dispatch", json={"worker": "test", "action": "echo"})

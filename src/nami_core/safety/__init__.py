@@ -14,7 +14,11 @@ from nami_core.safety.types import (
     DetectorContext,
     DetectorOutcome,
 )
-from nami_core.safety.runner import DetectorRunner, Detector
+from nami_core.safety.runner import (
+    Detector,
+    DetectorRunner,
+    safety_metrics_prometheus_lines,
+)
 
 __all__ = [
     "ActionTaken",
@@ -23,4 +27,5 @@ __all__ = [
     "DetectorOutcome",
     "DetectorRunner",
     "Detector",
+    "safety_metrics_prometheus_lines",
 ]

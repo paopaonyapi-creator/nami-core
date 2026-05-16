@@ -7,8 +7,11 @@ import pytest
 from nami_core.safety.detectors import ALL_DETECTORS
 from nami_core.safety.runner import (
     DetectorRunner,
+    get_detection_counts,
     get_fallback_counts,
+    reset_detection_counts,
     reset_fallback_counts,
+    safety_metrics_prometheus_lines,
     set_metric_emitter,
 )
 from nami_core.safety.types import Detection, DetectorContext
@@ -112,3 +115,44 @@ def test_runner_outcome_by_action_filter() -> None:
     filters = outcome.by_action("filter")
     assert len(rejects) == 1 and rejects[0].pattern == "D1"
     assert len(filters) == 1 and filters[0].pattern == "D6"
+
+
+def test_safety_metrics_prometheus_lines_empty_emits_stable_schema() -> None:
+    lines = safety_metrics_prometheus_lines()
+    assert lines[0] == "# TYPE nami_safety_detection_total counter"
+    assert any("pattern=\"none\"" in line and "action_taken=\"none\"" in line for line in lines)
+
+
+def test_safety_metrics_prometheus_lines_records_detection_counts() -> None:
+    runner = DetectorRunner(ALL_DETECTORS)
+    runner.run(_ctx(plan={"tool": "ghost"}, tool_registry=["search"]))
+    runner.run(_ctx(plan={"tool": "ghost"}, tool_registry=["search"]))
+
+    lines = safety_metrics_prometheus_lines()
+    assert any(
+        'nami_safety_detection_total{pattern="D1",action_taken="reject"} 2' == line
+        for line in lines
+    )
+
+
+def test_detection_counts_always_recorded_even_with_external_emitter() -> None:
+    """S7.3: in-process count is canonical so /metrics/prometheus always works."""
+    pushed: list[tuple[str, str]] = []
+    set_metric_emitter(lambda pat, act: pushed.append((pat, act)))
+
+    DetectorRunner(ALL_DETECTORS).run(_ctx(plan={"tool": "ghost"}, tool_registry=["ok"]))
+
+    assert ("D1", "reject") in pushed
+    assert get_detection_counts()[("D1", "reject")] == 1
+
+
+def test_get_fallback_counts_alias_returns_detection_counts() -> None:
+    DetectorRunner(ALL_DETECTORS).run(_ctx(plan={"tool": "ghost"}, tool_registry=["ok"]))
+    assert get_fallback_counts() == get_detection_counts()
+
+
+def test_reset_detection_counts_clears_store() -> None:
+    DetectorRunner(ALL_DETECTORS).run(_ctx(plan={"tool": "ghost"}, tool_registry=["ok"]))
+    assert get_detection_counts()
+    reset_detection_counts()
+    assert get_detection_counts() == {}

@@ -48,6 +48,24 @@ The Prometheus endpoint also exposes in-process counters used by the dashboards:
 - `nami_tokens_out_total{role="..."}`
 - `nami_cost_spans_total{role="..."}`
 
+## Safety detection metrics (SAFETY §7.3)
+
+Phase 33 detectors record every firing in an in-process counter, exposed
+on the same `/metrics/prometheus` endpoint:
+
+- `nami_safety_detection_total{pattern="D1..D20",action_taken="..."}`
+
+`action_taken` values track the outcome (`reject`, `halt_branch`,
+`halt_action`, `halt_role`, `filter`, `truncate`, `force_reroll`,
+`alert`). The schema is stable: when no detection has fired yet, a
+sentinel sample with `pattern="none",action_taken="none"` is emitted so
+scrapers always see the metric.
+
+An optional external emitter can be installed via
+`nami_core.safety.runner.set_metric_emitter(fn)` (e.g. statsd push); the
+in-process counter remains the canonical source even when the external
+emitter raises.
+
 ## Validation
 
 Local validation:

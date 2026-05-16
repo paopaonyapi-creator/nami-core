@@ -33,6 +33,7 @@ from nami_core.runtime_v2 import (
     run_runtime_diagnostics,
 )
 from nami_core.runtime.obs import configure_otel, cost_metrics_prometheus_lines, cost_span
+from nami_core.safety import safety_metrics_prometheus_lines
 from nami_core.runtime.queue.idempotency import idempotency_key
 from nami_core.runtime.queue.jobs_dao import JobsDAO
 from nami_core.runtime.queue.redis_stream import EVENT_STREAM, RedisStream
@@ -160,6 +161,7 @@ class Metrics:
             lines.append(f"{key} {value}")
         lines.extend(BridgeMetrics.prometheus_lines())
         lines.extend(cost_metrics_prometheus_lines())
+        lines.extend(safety_metrics_prometheus_lines())
         return "\n".join(lines) + "\n"
 
 
