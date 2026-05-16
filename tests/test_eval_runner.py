@@ -62,10 +62,10 @@ def test_all_eval_suites_have_committed_baselines():
     suite_names = {path.stem for path in (ROOT / "nami-evals" / "suites").glob("*.yaml")}
     baseline_names = {path.stem for path in (ROOT / "nami-evals" / "baselines").glob("*.json")}
 
-    assert suite_names == {"chat_quality", "lottery_correctness", "tool_invocation"}
+    assert suite_names == {"chat_quality", "lottery_correctness", "tool_invocation", "safety_suite"}
     assert baseline_names == suite_names
 
-    expected_counts = {"chat_quality": 10, "lottery_correctness": 5, "tool_invocation": 5}
+    expected_counts = {"chat_quality": 10, "lottery_correctness": 5, "tool_invocation": 5, "safety_suite": 26}
     for suite_name in suite_names:
         suite = yaml.safe_load((ROOT / "nami-evals" / "suites" / f"{suite_name}.yaml").read_text(encoding="utf-8"))
         baseline = json.loads((ROOT / "nami-evals" / "baselines" / f"{suite_name}.json").read_text(encoding="utf-8"))
