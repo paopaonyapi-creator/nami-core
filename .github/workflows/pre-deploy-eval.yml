@@ -1,0 +1,27 @@
+name: Pre-deploy eval
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - main
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: python -m pip install -e .[dev]
+      - name: Run eval gate
+        run: python nami-evals/runner.py run --all --fail-under 0.85
+      - name: Upload eval JUnit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nami-evals-junit
+          path: nami-evals/results/*.xml

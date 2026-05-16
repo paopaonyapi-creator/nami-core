@@ -1,0 +1,11 @@
+{
+  "suite": "tool_invocation",
+  "generated_from": "current-main-phase-26.3",
+  "cases": {
+    "ti_runtime_tool_shape": {"endpoint": "/runtime/tools/invoke", "body_keys": ["tool", "payload"]},
+    "ti_dispatch_worker_bridge_header": {"header": "X-Nami-Bridge-From", "value": "dispatchWorker", "deprecation": "2026-06-30"},
+    "ti_legacy_dispatch_bridge_header": {"endpoint": "/dispatch", "deprecation": "2026-07-15"},
+    "ti_mcp_call_shape": {"tool": "mcp.invoke", "payload_keys": ["server", "tool", "arguments"]},
+    "ti_queue_action_response": {"ok": true, "fields": ["job_id", "status", "idempotent", "latency_ms"]}
+  }
+}

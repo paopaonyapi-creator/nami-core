@@ -1,0 +1,31 @@
+suite: lottery_correctness
+cases:
+  - id: lc_v6_region_lao_shape
+    judge: exact_match
+    threshold: 1.0
+    current_output:
+      engine: v6
+      region: lao
+      fields: ["1d", "2d", "3d"]
+  - id: lc_v6_region_hanoi_shape
+    judge: exact_match
+    threshold: 1.0
+    current_output:
+      engine: v6
+      region: hanoi
+      fields: ["1d", "2d", "3d"]
+  - id: lc_backtest_summary_keys
+    judge: exact_match
+    threshold: 1.0
+    current_output:
+      keys: ["accuracy", "days", "engine", "region"]
+  - id: lc_policy_no_guarantee
+    judge: regex_match
+    threshold: 1.0
+    current_output: "lottery policy reports probabilistic predictions and no guaranteed win"
+  - id: lc_sweep_grid_bound
+    judge: exact_match
+    threshold: 1.0
+    current_output:
+      max_candidates: 64
+      bounded: true
