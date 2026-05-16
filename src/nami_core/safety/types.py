@@ -61,6 +61,19 @@ class DetectorContext:
     iter_budget_total: float = 0.0
     parent_chain: list[str] = field(default_factory=list)
     parent_status: str | None = None
+    evaluator_acceptance_rate: float | None = None
+    evaluator_window_size: int = 0
+    call_cost_usd: float = 0.0
+    rolling_p95_cost_usd: float | None = None
+    call_latency_ms: float = 0.0
+    rolling_p95_latency_ms: float | None = None
+    job_running_seconds: float = 0.0
+    heartbeat_present: bool = True
+    dlq_length: int = 0
+    mcp_consecutive_timeouts: int = 0
+    mcp_server_name: str | None = None
+    file_access_path: str | None = None
+    file_access_allowed_roots: list[str] = field(default_factory=list)
 
 
 @dataclass
