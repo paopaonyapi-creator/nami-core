@@ -644,6 +644,10 @@ def _v6_compute(history_draws: list[dict[str, Any]], weights: dict[str, Any] | N
 
 
 def predict_v6(payload):
+    if payload.get("test_mode") and os.environ.get("NAMI_BACKTEST_TEST_MODE") == "1":
+        return {"ok": True, "test_mode": True}
+
+
     region = payload.get("region", "lao")
     if region != "lao":
         return {"error": "v6 engine currently supports only lao", "region": region}
@@ -804,6 +808,9 @@ def backtest_v6(payload: dict[str, Any]) -> dict[str, Any]:
 
     Returns a summary including backtest hit rates and per-date samples.
     """
+    if payload.get("test_mode") and os.environ.get("NAMI_BACKTEST_TEST_MODE") == "1":
+        return {"ok": True, "test_mode": True}
+
     region = payload.get("region", "lao")
     if region != "lao":
         return {"error": "backtest only supports lao", "region": region}

@@ -9,14 +9,17 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from nami_core.inference_gateway import InferenceGateway, InferenceRequest
 from nami_core.mcp_client import McpClientError, McpClientManager
 from nami_core.mcp_config import McpConfig, load_mcp_config
 from nami_core.runtime_v2 import (
@@ -30,6 +33,15 @@ from nami_core.runtime_v2 import (
     restore_git_worktree_files,
     run_runtime_diagnostics,
 )
+from nami_core.runtime.obs import configure_otel, cost_metrics_prometheus_lines, cost_span
+from nami_core.safety import safety_metrics_prometheus_lines
+from nami_core.runtime.queue.idempotency import idempotency_key
+from nami_core.runtime.queue.jobs_dao import JobsDAO
+from nami_core.runtime.queue.redis_stream import DEAD_STREAM, EVENT_STREAM, RedisStream
+from nami_core.runtime.queue.dlq_scan import scan_dlq
+from nami_core.runtime.queue.safety_gate import SafetyRejection, safe_enqueue
+from nami_core.runtime.queue.types import JobBudget, JobMessage
+from nami_core.runtime.queue.ulid import generate_ulid
 
 logger = logging.getLogger("nami_core.app")
 
@@ -40,14 +52,16 @@ AUDIT_DB = os.environ.get("NAMI_AUDIT_DB", "/tmp/nami_audit.db")
 def _audit_log(worker: str, action: str, caller_ip: str, ok: bool, latency_ms: float) -> None:
     try:
         conn = sqlite3.connect(AUDIT_DB)
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 worker TEXT, action TEXT, caller_ip TEXT,
                 ok BOOLEAN, latency_ms REAL,
                 timestamp TEXT NOT NULL
             )
-        """)
+            """
+        )
         conn.execute(
             "INSERT INTO audit_log (worker, action, caller_ip, ok, latency_ms, timestamp) VALUES (?,?,?,?,?,?)",
             (worker, action, caller_ip, ok, latency_ms, datetime.now(timezone.utc).isoformat()),
@@ -66,6 +80,13 @@ class DispatchRequest(BaseModel):
     payload: dict[str, Any] = {}
     approved: bool = False
 
+class RuntimeToolInvokeRequest(BaseModel):
+    worker: str = ""
+    action: str = ""
+    tool: str = ""
+    payload: dict[str, Any] = {}
+    approved: bool = False
+
 class WebhookRequest(BaseModel):
     source: str = "unknown"
     event: str = "ping"
@@ -76,6 +97,9 @@ class DispatchResponse(BaseModel):
     output: dict[str, Any] | None = None
     latency_ms: float | None = None
     error: str | None = None
+    job_id: str | None = None
+    status: str | None = None
+    idempotent: bool | None = None
 
 class BatchDispatchItem(BaseModel):
     worker: str
@@ -138,7 +162,28 @@ class Metrics:
             metric_type = "counter" if "total" in key else "gauge"
             lines.append(f"# TYPE {key} {metric_type}")
             lines.append(f"{key} {value}")
+        lines.extend(BridgeMetrics.prometheus_lines())
+        lines.extend(cost_metrics_prometheus_lines())
+        lines.extend(safety_metrics_prometheus_lines())
         return "\n".join(lines) + "\n"
+
+
+class BridgeMetrics:
+    calls: dict[tuple[str, str], int] = {}
+
+    @classmethod
+    def record(cls, from_path: str, to_path: str) -> None:
+        key = (from_path, to_path)
+        cls.calls[key] = cls.calls.get(key, 0) + 1
+
+    @classmethod
+    def prometheus_lines(cls) -> list[str]:
+        lines = ["# TYPE nami_bridge_calls_total counter"]
+        for (from_path, to_path), count in sorted(cls.calls.items()):
+            lines.append(f'nami_bridge_calls_total{{from_path="{from_path}",to_path="{to_path}"}} {count}')
+        if not cls.calls:
+            lines.append('nami_bridge_calls_total{from_path="none",to_path="none"} 0')
+        return lines
 
 
 # ── WebSocket manager ──
@@ -181,8 +226,8 @@ class WSManager:
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 asyncio.ensure_future(self.broadcast(event, data))
-        except RuntimeError:
-            pass
+        except RuntimeError as exc:
+            logger.warning("broadcast_sync skipped (no running loop): %s", exc)
 
 
 # ── Rate limiter (in-memory, per-IP) ──
@@ -245,25 +290,135 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         logger.info("Generated NAMI_WEBHOOK_SECRET (set env var to customize)")
 
     # Store references in app state
+    mcp_config_file = os.environ.get("NAMI_MCP_CONFIG_FILE")
     app.state.hermes = hermes
     app.state.scheduler = scheduler
     app.state.api_key = api_key
     app.state.ws_manager = ws_manager
-    app.state.tool_registry = ToolRegistry.from_hermes(hermes)
+    app.state.tool_registry = ToolRegistry.from_hermes(app.state.hermes)
     app.state.runtime_jobs = RuntimeJobStore(os.environ.get("NAMI_RUNTIME_JOBS_FILE") or None)
-    app.state.runtime_events = []
-    mcp_config_file = os.environ.get("NAMI_MCP_CONFIG_FILE")
+    app.state.runtime_events = deque(maxlen=500)
     app.state.mcp_config = load_mcp_config(mcp_config_file) if mcp_config_file else McpConfig()
     app.state.mcp_client = McpClientManager(app.state.mcp_config)
+    app.state.otel_enabled = configure_otel()
+    app.state.inference_gateway = InferenceGateway()
+    app.state.jobs_dao = JobsDAO()
+    app.state.job_stream = RedisStream()
+    app.state.queue_actions = {"lottery.backtest_v6"}
+    app.state.sync_fallback_enabled = os.environ.get("NAMI_SYNC_FALLBACK", "1") != "0"
 
     @app.on_event("shutdown")
     async def shutdown_mcp_client():
         await app.state.mcp_client.close()
+        stop_event = getattr(app.state, "event_bridge_stop", None)
+        if stop_event is not None:
+            stop_event.set()
 
     def record_runtime_event(event: RuntimeEvent) -> None:
+        # Bounded deque (maxlen=500) handles eviction; old slice-rewrite removed.
         app.state.runtime_events.append(event)
-        if len(app.state.runtime_events) > 500:
-            app.state.runtime_events = app.state.runtime_events[-500:]
+
+    def _build_job_budget() -> JobBudget:
+        return JobBudget(
+            max_retries=int(os.environ.get("NAMI_JOB_MAX_RETRIES", "3")),
+            max_seconds=int(os.environ.get("NAMI_JOB_MAX_SECONDS", "300")),
+            max_tokens=int(os.environ.get("NAMI_JOB_MAX_TOKENS", "50000")),
+        )
+
+    def _generate_traceparent() -> str:
+        trace_id = os.urandom(16).hex()
+        span_id = os.urandom(8).hex()
+        return f"00-{trace_id}-{span_id}-01"
+
+    def _tool_parts(req: RuntimeToolInvokeRequest) -> tuple[str, str, str]:
+        if req.tool:
+            if "." not in req.tool:
+                raise HTTPException(status_code=400, detail="tool must use worker.action format")
+            worker, action = req.tool.split(".", 1)
+            return worker, action, req.tool
+        if not req.worker or not req.action:
+            raise HTTPException(status_code=400, detail="worker/action or tool required")
+        return req.worker, req.action, f"{req.worker}.{req.action}"
+
+    def _enqueue_job(worker: str, action: str, payload: dict[str, Any]) -> tuple[str, bool, str]:
+        action_name = f"{worker}.{action}"
+        with cost_span(
+            "nami.dispatch.enqueue",
+            role="dispatcher",
+            attributes={"nami.action": action_name, "nami.worker": worker},
+        ):
+            key = idempotency_key(action_name, payload)
+            existing = app.state.jobs_dao.get_by_idempotency(key)
+            if existing and existing.get("status") in {"queued", "running", "succeeded"}:
+                return str(existing["id"]), True, str(existing.get("status"))
+
+            job_id = generate_ulid()
+            budget = _build_job_budget()
+            trace_id = _generate_traceparent()
+            app.state.jobs_dao.insert_job(
+                job_id=job_id,
+                action=action_name,
+                payload=payload,
+                idempotency_key=key,
+                trace_id=trace_id,
+                parent_id=None,
+                budget=budget,
+                status="queued",
+                attempt=1,
+            )
+            message = JobMessage(
+                id=job_id,
+                action=action_name,
+                payload=payload,
+                idempotency_key=key,
+                trace_id=trace_id,
+                parent_id=None,
+                budget=budget,
+                enqueued_at=datetime.now(timezone.utc).isoformat(),
+                attempt=1,
+            )
+            safe_enqueue(app.state.job_stream, message)
+            app.state.job_stream.publish_event("job.queued", {"job_id": job_id, "action": action_name, "trace_id": trace_id})
+            return job_id, False, "queued"
+
+    def _start_event_stream_bridge() -> None:
+        if not os.environ.get("NAMI_REDIS_URL"):
+            return
+        stop_event = threading.Event()
+        app.state.event_bridge_stop = stop_event
+        consumer = f"nami-core-{os.getpid()}"
+        group = "sse-bridge"
+
+        def _loop() -> None:
+            while not stop_event.is_set():
+                try:
+                    app.state.job_stream.ensure_group(group, stream=EVENT_STREAM)
+                    messages = app.state.job_stream.read_group(group, consumer, count=10, stream=EVENT_STREAM)
+                    if not messages:
+                        stop_event.wait(2)
+                        continue
+                    for msg_id, fields in messages:
+                        event_name = fields.get("event", "unknown")
+                        raw_data = fields.get("data") or "{}"
+                        try:
+                            data = json.loads(raw_data)
+                        except json.JSONDecodeError:
+                            data = {"raw": raw_data}
+                        job_id = data.get("job_id") if isinstance(data, dict) else None
+                        event = RuntimeEvent(type=event_name, job_id=job_id, data=data if isinstance(data, dict) else {})
+                        record_runtime_event(event)
+                        ws_manager.broadcast_sync("runtime.event", event.to_dict())
+                        app.state.job_stream.ack(group, msg_id, stream=EVENT_STREAM)
+                except Exception as exc:
+                    logger.warning("Event stream bridge error: %s", exc)
+                    stop_event.wait(2)
+
+        thread = threading.Thread(target=_loop, daemon=True, name="nami-event-bridge")
+        thread.start()
+
+    if os.environ.get("NAMI_JOBS_AUTO_DDL") == "1":
+        app.state.jobs_dao.ensure_schema()
+    _start_event_stream_bridge()
     # ── Request logging middleware ──
 
     @app.middleware("http")
@@ -288,7 +443,64 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             raise HTTPException(status_code=401, detail="unauthorized")
         return key
 
+    def _dump_model(model: Any) -> dict[str, Any]:
+        if hasattr(model, "model_dump"):
+            return model.model_dump()
+        return model.dict()
+
+    def _complete_inference(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            req = InferenceRequest(**payload)
+            result = app.state.inference_gateway.complete(req)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"ok": True, **_dump_model(result)}
+
+    def _queue_job_response(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": row.get("id"),
+            "requested_action": row.get("action"),
+            "status": row.get("status"),
+            "payload": row.get("payload"),
+            "result": row.get("result"),
+            "error": row.get("error"),
+            "trace_id": row.get("trace_id"),
+            "parent_id": row.get("parent_id"),
+            "attempt": row.get("attempt"),
+            "worker_id": row.get("worker_id"),
+            "enqueued_at": row.get("enqueued_at"),
+            "started_at": row.get("started_at"),
+            "finished_at": row.get("finished_at"),
+            "updated_at": row.get("updated_at"),
+            "source": "queue",
+        }
+
     # ── Routes ──
+
+    def _dlq_health_snapshot() -> dict[str, Any]:
+        """Return a lightweight DLQ snapshot + D14 detection if any.
+
+        Best-effort: Redis unreachable → returns {"length": 0, "error": ...}.
+        Reads only XLEN — no XRANGE, no per-message scan. Action-failure
+        breakdown is intentionally omitted here; caller-driven sampling
+        can be added later via a dedicated /runtime/dlq endpoint.
+        """
+        try:
+            client = app.state.job_stream._get_client()  # noqa: SLF001
+            dlq_length = int(client.xlen(DEAD_STREAM))
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            return {"length": 0, "stream": DEAD_STREAM, "error": f"xlen_failed: {exc}"}
+        result = scan_dlq(dlq_length=dlq_length)
+        snapshot: dict[str, Any] = {"length": dlq_length, "stream": DEAD_STREAM}
+        if result.detection is not None:
+            snapshot["detection"] = {
+                "pattern": result.detection.pattern,
+                "action": result.detection.action,
+                "reason": result.detection.reason,
+            }
+        return snapshot
 
     @app.get("/runtime/health")
     async def runtime_health(request: Request):
@@ -301,6 +513,7 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             "tools": len(app.state.tool_registry.list()),
             "jobs": len(app.state.runtime_jobs.list()),
             "scheduler": app.state.scheduler.status() if app.state.scheduler else {},
+            "dlq": _dlq_health_snapshot(),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -315,6 +528,11 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         mcp_tools = [tool.to_metadata().to_dict() for tool in app.state.mcp_client.tools()]
         tools = sorted([*registry_tools, *mcp_tools], key=lambda tool: tool["name"])
         return {"tools": tools}
+
+    @app.post("/runtime/inference/chat")
+    async def runtime_inference_chat(req: InferenceRequest, _auth: str = Depends(verify_api_key)):
+        Metrics.request_count += 1
+        return _complete_inference(_dump_model(req))
 
     @app.get("/runtime/mcp/servers")
     async def runtime_mcp_servers(request: Request):
@@ -458,9 +676,27 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             raise HTTPException(status_code=502, detail=str(exc))
 
     @app.post("/runtime/tools/invoke")
-    async def runtime_tool_invoke(req: DispatchRequest, request: Request, authorization: str = Header(default="")):
+    async def runtime_tool_invoke(
+        req: RuntimeToolInvokeRequest,
+        request: Request,
+        response: Response,
+        authorization: str = Header(default=""),
+        x_nami_bridge_from: str = Header(default=""),
+    ):
         Metrics.request_count += 1
-        tool_name = f"{req.worker}.{req.action}"
+        if x_nami_bridge_from == "dispatchWorker":
+            # expiry: 2026-06-30
+            if os.environ.get("NAMI_BRIDGE_B2", "on") == "off":
+                raise HTTPException(status_code=410, detail="dispatchWorker bridge disabled")
+            BridgeMetrics.record("dispatchWorker", "runtime.tools.invoke")
+            response.headers["Deprecation"] = "2026-06-30"
+        worker, action, tool_name = _tool_parts(req)
+        if tool_name == "nami.llm.chat":
+            if app.state.api_key:
+                key = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+                if key != app.state.api_key:
+                    raise HTTPException(status_code=401, detail="api key required")
+            return _complete_inference(req.payload)
         tool = app.state.tool_registry.get(tool_name)
         if tool is None:
             raise HTTPException(status_code=404, detail=f"tool not registered: {tool_name}")
@@ -476,24 +712,40 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
                 raise HTTPException(status_code=403, detail="approval required")
         if decision == "deny":
             raise HTTPException(status_code=403, detail="tool denied by policy")
+        if tool_name in app.state.queue_actions:
+            t0 = time.monotonic()
+            try:
+                job_id, idempotent, status = _enqueue_job(worker, action, req.payload)
+                latency = (time.monotonic() - t0) * 1000
+                Metrics.record_dispatch(latency)
+                _audit_log(worker, action, request.client.host if request.client else "-", True, latency)
+                queued = RuntimeEvent(type="tool.queued", job_id=job_id, data={"tool": tool_name, "status": status, "idempotent": idempotent})
+                record_runtime_event(queued)
+                await ws_manager.broadcast("runtime.event", queued.to_dict())
+                return {"ok": True, "job_id": job_id, "status": status, "idempotent": idempotent, "latency_ms": round(latency, 1)}
+            except Exception as exc:
+                Metrics.record_error()
+                _audit_log(worker, action, request.client.host if request.client else "-", False, 0)
+                if not app.state.sync_fallback_enabled:
+                    raise HTTPException(status_code=503, detail=f"queue unavailable: {exc}")
         job = app.state.runtime_jobs.create(tool_name, json.dumps(req.payload, ensure_ascii=False, default=str)[:240])
         job.status = "running"
         job.updated_at = datetime.now(timezone.utc).isoformat()
         started = RuntimeEvent(type="tool.started", job_id=job.id, data={"tool": tool_name})
         job.progress_events.append(started)
-        job.audit_entries.append({"event": "tool.started", "worker": req.worker, "action": req.action, "ok": None, "timestamp": started.timestamp})
+        job.audit_entries.append({"event": "tool.started", "worker": worker, "action": action, "ok": None, "timestamp": started.timestamp})
         app.state.runtime_jobs.save(job)
         record_runtime_event(started)
         try:
             snapshot_before = capture_git_worktree_snapshot() if tool.permission_level == "mutating" else None
             t0 = time.monotonic()
-            result = app.state.hermes.dispatch(req.worker, req.action, req.payload)
+            result = app.state.hermes.dispatch(worker, action, req.payload)
             latency = (time.monotonic() - t0) * 1000
             snapshot_after = capture_git_worktree_snapshot() if snapshot_before is not None else None
             diagnostic_checks = run_runtime_diagnostics() if snapshot_before is not None else None
             diagnostics = build_mutating_tool_diagnostics(snapshot_before, snapshot_after, diagnostic_checks) if snapshot_before is not None and snapshot_after is not None else None
             Metrics.record_dispatch(latency)
-            _audit_log(req.worker, req.action, request.client.host if request.client else "-", True, latency)
+            _audit_log(worker, action, request.client.host if request.client else "-", True, latency)
             job.status = "completed"
             job.updated_at = datetime.now(timezone.utc).isoformat()
             job.result = {"ok": True, "output": result.output, "latency_ms": round(latency, 1)}
@@ -502,7 +754,7 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
                 job.result["diagnostics"] = diagnostics
             completed = RuntimeEvent(type="job.completed", job_id=job.id, data=job.result)
             job.progress_events.append(RuntimeEvent(type="tool.completed", job_id=job.id, data=job.result))
-            completed_audit = {"event": "tool.completed", "worker": req.worker, "action": req.action, "ok": True, "latency_ms": round(latency, 1), "timestamp": completed.timestamp}
+            completed_audit = {"event": "tool.completed", "worker": worker, "action": action, "ok": True, "latency_ms": round(latency, 1), "timestamp": completed.timestamp}
             if diagnostics is not None:
                 completed_audit["diagnostics"] = diagnostics
             job.audit_entries.append(completed_audit)
@@ -512,25 +764,25 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             return {"ok": True, "job": job.to_dict(), "output": result.output, "latency_ms": round(latency, 1)}
         except ValueError as exc:
             Metrics.record_error()
-            _audit_log(req.worker, req.action, request.client.host if request.client else "-", False, 0)
+            _audit_log(worker, action, request.client.host if request.client else "-", False, 0)
             job.status = "failed"
             job.updated_at = datetime.now(timezone.utc).isoformat()
             job.error = str(exc)
             failed = RuntimeEvent(type="job.failed", job_id=job.id, data={"error": str(exc)})
             job.progress_events.append(RuntimeEvent(type="tool.failed", job_id=job.id, data={"error": str(exc)}))
-            job.audit_entries.append({"event": "tool.failed", "worker": req.worker, "action": req.action, "ok": False, "error": str(exc), "timestamp": failed.timestamp})
+            job.audit_entries.append({"event": "tool.failed", "worker": worker, "action": action, "ok": False, "error": str(exc), "timestamp": failed.timestamp})
             app.state.runtime_jobs.save(job)
             record_runtime_event(failed)
             raise HTTPException(status_code=404, detail=str(exc))
         except Exception as exc:
             Metrics.record_error()
-            _audit_log(req.worker, req.action, request.client.host if request.client else "-", False, 0)
+            _audit_log(worker, action, request.client.host if request.client else "-", False, 0)
             job.status = "failed"
             job.updated_at = datetime.now(timezone.utc).isoformat()
             job.error = str(exc)
             failed = RuntimeEvent(type="job.failed", job_id=job.id, data={"error": str(exc)})
             job.progress_events.append(RuntimeEvent(type="tool.failed", job_id=job.id, data={"error": str(exc)}))
-            job.audit_entries.append({"event": "tool.failed", "worker": req.worker, "action": req.action, "ok": False, "error": str(exc), "timestamp": failed.timestamp})
+            job.audit_entries.append({"event": "tool.failed", "worker": worker, "action": action, "ok": False, "error": str(exc), "timestamp": failed.timestamp})
             app.state.runtime_jobs.save(job)
             record_runtime_event(failed)
             raise HTTPException(status_code=500, detail=str(exc))
@@ -544,9 +796,12 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
     async def runtime_job_detail(job_id: str):
         Metrics.request_count += 1
         job = app.state.runtime_jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
-        return job.to_dict()
+        if job is not None:
+            return job.to_dict()
+        queue_job = app.state.jobs_dao.get_by_id(job_id)
+        if queue_job is not None:
+            return _queue_job_response(queue_job)
+        raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
 
     @app.get("/runtime/jobs/{job_id}/recovery/preview")
     async def runtime_job_recovery_preview(job_id: str):
@@ -689,19 +944,57 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         )
 
     @app.post("/dispatch", response_model=DispatchResponse)
-    async def dispatch(req: DispatchRequest, request: Request, _auth: str = Depends(verify_api_key)):
+    async def dispatch(req: DispatchRequest, request: Request, response: Response, _auth: str = Depends(verify_api_key)):
         Metrics.request_count += 1
+        # expiry: 2026-07-15
+        if os.environ.get("NAMI_BRIDGE_B1", "on") == "off":
+            raise HTTPException(status_code=410, detail="legacy /dispatch bridge disabled")
+        BridgeMetrics.record("dispatch", "runtime.tools.invoke")
+        response.headers["Deprecation"] = "2026-07-15"
         ip = request.client.host if request.client else "-"
         if not dispatch_limiter.is_allowed(ip):
             raise HTTPException(status_code=429, detail="rate limit exceeded")
         if not req.worker or not req.action:
             raise HTTPException(status_code=400, detail="worker and action required")
 
+        action_name = f"{req.worker}.{req.action}"
+
         # Per-worker rate limit
         if req.worker not in worker_limiters:
             worker_limiters[req.worker] = RateLimiter(max_requests=worker_rate_max, window_seconds=60)
         if not worker_limiters[req.worker].is_allowed(ip):
             raise HTTPException(status_code=429, detail=f"rate limit exceeded for worker '{req.worker}'")
+
+        if action_name in app.state.queue_actions:
+            t0 = time.monotonic()
+            try:
+                job_id, idempotent, status = _enqueue_job(req.worker, req.action, req.payload)
+                latency = (time.monotonic() - t0) * 1000
+                Metrics.record_dispatch(latency)
+                _audit_log(req.worker, req.action, ip, True, latency)
+                await ws_manager.broadcast(
+                    "dispatch",
+                    {
+                        "worker": req.worker,
+                        "action": req.action,
+                        "latency_ms": round(latency, 1),
+                        "job_id": job_id,
+                        "status": status,
+                    },
+                )
+                return DispatchResponse(
+                    ok=True,
+                    job_id=job_id,
+                    status=status,
+                    idempotent=idempotent,
+                    latency_ms=round(latency, 1),
+                )
+            except Exception as exc:
+                if not app.state.sync_fallback_enabled:
+                    Metrics.record_error()
+                    _audit_log(req.worker, req.action, ip, False, 0)
+                    raise HTTPException(status_code=503, detail=f"queue unavailable: {exc}")
+                logger.warning("Queue enqueue failed, falling back to sync: %s", exc)
 
         try:
             t0 = time.monotonic()
@@ -737,12 +1030,47 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             if not item.worker or not item.action:
                 results.append({"worker": item.worker, "action": item.action, "ok": False, "error": "worker and action required", "latency_ms": 0})
                 continue
+            action_name = f"{item.worker}.{item.action}"
             # Per-worker rate limit
             if item.worker not in worker_limiters:
                 worker_limiters[item.worker] = RateLimiter(max_requests=worker_rate_max, window_seconds=60)
             if not worker_limiters[item.worker].is_allowed(ip):
                 results.append({"worker": item.worker, "action": item.action, "ok": False, "error": f"rate limit exceeded for worker '{item.worker}'", "latency_ms": 0})
                 continue
+            if action_name in app.state.queue_actions:
+                t0 = time.monotonic()
+                try:
+                    job_id, idempotent, status = _enqueue_job(item.worker, item.action, item.payload)
+                    latency = (time.monotonic() - t0) * 1000
+                    Metrics.record_dispatch(latency)
+                    _audit_log(item.worker, item.action, ip, True, latency)
+                    await ws_manager.broadcast(
+                        "dispatch",
+                        {
+                            "worker": item.worker,
+                            "action": item.action,
+                            "latency_ms": round(latency, 1),
+                            "job_id": job_id,
+                            "status": status,
+                        },
+                    )
+                    results.append(
+                        {
+                            "worker": item.worker,
+                            "action": item.action,
+                            "ok": True,
+                            "job_id": job_id,
+                            "status": status,
+                            "idempotent": idempotent,
+                            "latency_ms": round(latency, 1),
+                        }
+                    )
+                    continue
+                except Exception as exc:
+                    if not app.state.sync_fallback_enabled:
+                        results.append({"worker": item.worker, "action": item.action, "ok": False, "error": f"queue unavailable: {exc}", "latency_ms": 0})
+                        continue
+                    logger.warning("Queue enqueue failed in batch, falling back to sync: %s", exc)
             try:
                 t0 = time.monotonic()
                 result = app.state.hermes.dispatch(item.worker, item.action, item.payload)

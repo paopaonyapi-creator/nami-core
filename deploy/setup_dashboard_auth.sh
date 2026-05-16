@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
 # Setup dashboard authentication with nginx auth_basic
-# Usage: bash setup_dashboard_auth.sh [user] [password]
-
-USER="${1:-nami}"
-PASS="${2:-$(openssl rand -base64 12)}"
-HTPASSWD="/etc/nami-harness/dashboard.htpasswd"
+# Usage:
+#   DASHBOARD_USER=<user> DASHBOARD_PASS=<pass> bash setup_dashboard_auth.sh
+#   OR positional: bash setup_dashboard_auth.sh <user> <password>
+# Both env vars and positional args are supported; env vars take precedence.
 
 set -e
+
+USER="${DASHBOARD_USER:-${1:-}}"
+PASS="${DASHBOARD_PASS:-${2:-}}"
+HTPASSWD="/etc/nami-harness/dashboard.htpasswd"
+
+if [ -z "$USER" ] || [ -z "$PASS" ]; then
+    echo "ERROR: username and password required" >&2
+    echo "Usage: DASHBOARD_USER=<user> DASHBOARD_PASS=<pass> bash setup_dashboard_auth.sh" >&2
+    exit 1
+fi
 
 echo "Setting up dashboard auth for user: $USER"
 
@@ -16,10 +25,13 @@ if ! command -v htpasswd &>/dev/null; then
 fi
 
 # Create htpasswd file
+# Create htpasswd file
+# Permissions: dir 755 so nginx (www-data) can traverse, file 640 root:www-data so nginx can read
 mkdir -p /etc/nami-harness
+chmod 755 /etc/nami-harness
 htpasswd -cb "$HTPASSWD" "$USER" "$PASS"
-chmod 600 "$HTPASSWD"
-chown root:root "$HTPASSWD"
+chmod 640 "$HTPASSWD"
+chown root:www-data "$HTPASSWD"
 
 echo "Created $HTPASSWD"
 
@@ -51,6 +63,6 @@ nginx -t && systemctl reload nginx
 echo ""
 echo "=== Dashboard Auth Setup Complete ==="
 echo "User: $USER"
-echo "Password: $PASS"
+echo "Password: (set via env var, not displayed)"
 echo "Credentials stored in $HTPASSWD"
 echo "Dashboard URL: https://nami.178.104.181.132.nip.io/dashboard.html"

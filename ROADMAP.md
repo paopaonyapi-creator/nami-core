@@ -74,6 +74,17 @@
 - [x] 9 base workers (signal, proxy, lottery, bot, trading, gateway, status, bridge, graphify)
 - [x] Deploy scripts (systemd, nginx, install.sh)
 
+## Next: v0.15.0 — Ecosystem Coverage + Operational Hardening
+
+### v0.14.1 (2026-05-07) — Standalone services unified
+- [x] clipboardbypao_worker (port 3001)
+- [x] hanoi_stats_worker (port 3002)
+- [x] laopatana_lab_worker (port 3000)
+- [x] open_design_worker (port 7456)
+- [x] miroshark_oracle_worker (port 8003, FastAPI proxy: 6 actions)
+- [x] status_worker.VPS_SERVICES extended 13 -> 21 services
+- [x] 273 tests (+13)
+
 ## Next: v0.15.0 — Operational Hardening
 
 - [ ] Production telemetry for runtime jobs (Prometheus counters per policy class)

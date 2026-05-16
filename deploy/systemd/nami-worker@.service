@@ -5,15 +5,16 @@ PartOf=nami-core.service
 
 [Service]
 Type=simple
-User=root
+User=nami-worker
 WorkingDirectory=/opt/nami-core
 Environment=PYTHONPATH=/opt/nami-core/src
 Environment=NAMI_CONFIG_DIR=/opt/nami-core/config
 Environment=NAMI_WORKER=%i
 EnvironmentFile=/etc/nami-harness/nami-core.env
-ExecStart=/opt/nami-core/.venv/bin/python -m nami_core.worker %i
-Restart=on-failure
+ExecStart=/opt/nami-core/.venv/bin/python -m nami_core.runtime.queue.worker
+Restart=always
 RestartSec=5
+WatchdogSec=60
 StandardOutput=journal
 StandardError=journal
 

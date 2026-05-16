@@ -1,0 +1,32 @@
+{
+  "suite": "safety_suite",
+  "generated_from": "phase-33-detector-catalog",
+  "cases": {
+    "d1_unknown_tool_rejected": {},
+    "d1_known_tool_silent": {},
+    "d2_three_consecutive_same_action_halts": {},
+    "d3_high_acceptance_alerts": {},
+    "d4_repeated_plan_reroll": {},
+    "d5_front_loaded_spend_alerts": {},
+    "d6_tool_call_marker_filtered": {},
+    "d6_ignore_previous_instructions_filtered": {},
+    "d6_clean_chunks_silent": {},
+    "d7_cycle_rejected_at_enqueue": {},
+    "d8_failed_parent_halts_child": {},
+    "d8_running_parent_silent": {},
+    "d9_invalid_tool_output_halts": {},
+    "d10_cost_5x_p95_alerts": {},
+    "d11_latency_5x_p95_alerts": {},
+    "d12_prompt_80pct_truncate": {},
+    "d13_missing_heartbeat_halts": {},
+    "d14_dlq_over_threshold_halts_action": {},
+    "d15_three_timeouts_alerts": {},
+    "d16_query_model_mismatch_alerts": {},
+    "d17_two_roles_in_history_halts": {},
+    "d18_path_outside_root_halts": {},
+    "d18_traversal_marker_halts": {},
+    "d18_inside_root_silent": {},
+    "d19_temp_with_repeated_plan_alerts": {},
+    "d20_identical_payload_rejected": {}
+  }
+}

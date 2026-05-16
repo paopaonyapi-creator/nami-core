@@ -8,6 +8,7 @@ build/
 .nami-harness/
 *.jsonl
 .pytest_cache/
+nami-evals/results/
 
 .coverage
 .coverage.*

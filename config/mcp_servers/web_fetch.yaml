@@ -1,0 +1,21 @@
+# Phase 28 — web_fetch MCP server config.
+# Read-only HTTP/HTTPS retrieval; never writes to disk. Network is
+# required by definition. No filesystem access — agent must paste
+# response back through the loop.
+
+name: web_fetch
+command:
+  - npx
+args:
+  - -y
+  - "@modelcontextprotocol/server-fetch"
+env: {}
+allowed_paths: []                  # no FS access
+network: true
+timeout_seconds: 20
+scopes:
+  - tool: fetch
+    roles: ["agent", "researcher"]
+    constraints:
+      max_response_bytes: 524288   # 512 KB cap; truncated above
+      methods: ["GET", "HEAD"]

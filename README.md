@@ -3,7 +3,7 @@
 [![CI](https://github.com/paopaonyapi-creator/nami-core/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/paopaonyapi-creator/nami-core/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/paopaonyapi-creator/nami-core?include_prereleases&sort=semver)](https://github.com/paopaonyapi-creator/nami-core/releases/latest)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-260%20passing-brightgreen)](https://github.com/paopaonyapi-creator/nami-core/actions)
+[![Tests](https://img.shields.io/badge/tests-273%20passing-brightgreen)](https://github.com/paopaonyapi-creator/nami-core/actions)
 [![License](https://img.shields.io/github/license/paopaonyapi-creator/nami-core)](LICENSE)
 
 ![Nami Core Dashboard](docs/img/dashboard-overview.png)
@@ -31,10 +31,13 @@ User / Task request
   → result shipped only if quality passes
 ```
 
+Phase 26.1 introduces an async queue foundation using Redis Streams + Postgres.
+See [`docs/async-queue.md`](docs/async-queue.md) for deployment details.
+
 ## Workers
 
 | Worker | Source Service | Description |
-|---|---|---|
+| --- | --- | --- |
 | `signal_worker` | telegram-premium-bot | AI gold/market signal generation + Telegram delivery |
 | `proxy_worker` | maxplus-proxy | LLM API proxy with multi-provider fallback |
 | `lottery_worker` | hanoi-bot + laopatana | Hanoi/Lao lottery AI prediction (shared engine) |
@@ -86,6 +89,7 @@ python examples/nami_core_full_demo.py
 ## Deploy to VPS
 
 **One-shot setup:**
+
 ```bash
 # On VPS
 git clone https://github.com/paopaonyapi-creator/nami-core.git /opt/nami-core
@@ -93,6 +97,7 @@ cd /opt/nami-core && bash deploy/vps-setup.sh --shadow
 ```
 
 **Remote deploy (from any machine with SSH access):**
+
 ```bash
 bash deploy/remote-deploy.sh --shadow
 ```
@@ -132,7 +137,7 @@ Environment-specific diagnostics policies can be set with `NAMI_RUNTIME_ENV` and
 
 ## Test Results
 
-```
+```text
 258 passed in 42.79s
 ```
 
@@ -141,6 +146,7 @@ Environment-specific diagnostics policies can be set with `NAMI_RUNTIME_ENV` and
 **Current version: v0.14.0** (2026-05-07)
 
 Shipped highlights:
+
 - FastAPI server with batch dispatch, SSE streaming, webhook HMAC signing
 - Redis pub/sub with in-process fallback
 - 23 plugin workers (signal, proxy, lottery, bot, trading, gateway, status,

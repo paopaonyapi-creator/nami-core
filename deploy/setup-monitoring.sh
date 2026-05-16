@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 # Setup Prometheus + Grafana monitoring stack on VPS
-# Usage: bash setup-monitoring.sh
+# Usage:
+#   GRAFANA_USER=<user> GRAFANA_PASS=<pass> bash setup-monitoring.sh
+# Required env vars:
+#   GRAFANA_USER  - Grafana admin username
+#   GRAFANA_PASS  - Grafana admin password
 
 set -e
+
+if [ -z "${GRAFANA_USER:-}" ] || [ -z "${GRAFANA_PASS:-}" ]; then
+    echo "ERROR: GRAFANA_USER and GRAFANA_PASS env vars are required" >&2
+    echo "Example: GRAFANA_USER=paopaony GRAFANA_PASS=secret bash setup-monitoring.sh" >&2
+    exit 1
+fi
 
 echo "=== Setting up Prometheus + Grafana ==="
 
@@ -70,6 +80,12 @@ fi
 # Configure Grafana to listen on 127.0.0.1 (nginx will proxy)
 sed -i 's/;http_addr =/http_addr = 127.0.0.1/' /etc/grafana/grafana.ini 2>/dev/null || true
 
+# Seed admin user/password from env vars (only takes effect on first start, before users db is created)
+if [ -f /etc/grafana/grafana.ini ]; then
+    sed -i "s/^;\?admin_user =.*/admin_user = ${GRAFANA_USER}/" /etc/grafana/grafana.ini
+    sed -i "s/^;\?admin_password =.*/admin_password = ${GRAFANA_PASS}/" /etc/grafana/grafana.ini
+fi
+
 systemctl enable grafana-server
 systemctl restart grafana-server
 echo "Grafana started on :3000"
@@ -103,8 +119,6 @@ fi
 
 # Setup Grafana datasource + dashboard via API
 sleep 5
-GRAFANA_USER="admin"
-GRAFANA_PASS="admin"
 
 # Add Prometheus datasource
 curl -s -u "${GRAFANA_USER}:${GRAFANA_PASS}" http://127.0.0.1:3000/api/datasources \
@@ -137,5 +151,5 @@ echo ""
 echo "=== Monitoring Setup Complete ==="
 echo "Prometheus: http://127.0.0.1:9090"
 echo "Grafana:    https://grafana.178.104.181.132.nip.io"
-echo "Default Grafana login: admin / admin"
+echo "Grafana login: \$GRAFANA_USER / \$GRAFANA_PASS (from env vars passed at setup time)"
 echo "Dashboard: Nami Core (auto-created)"

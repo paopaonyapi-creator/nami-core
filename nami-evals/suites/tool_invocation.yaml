@@ -1,0 +1,33 @@
+suite: tool_invocation
+cases:
+  - id: ti_runtime_tool_shape
+    judge: exact_match
+    threshold: 1.0
+    current_output:
+      endpoint: /runtime/tools/invoke
+      body_keys: ["tool", "payload"]
+  - id: ti_dispatch_worker_bridge_header
+    judge: exact_match
+    threshold: 1.0
+    current_output:
+      header: X-Nami-Bridge-From
+      value: dispatchWorker
+      deprecation: "2026-06-30"
+  - id: ti_legacy_dispatch_bridge_header
+    judge: exact_match
+    threshold: 1.0
+    current_output:
+      endpoint: /dispatch
+      deprecation: "2026-07-15"
+  - id: ti_mcp_call_shape
+    judge: exact_match
+    threshold: 1.0
+    current_output:
+      tool: mcp.invoke
+      payload_keys: ["server", "tool", "arguments"]
+  - id: ti_queue_action_response
+    judge: exact_match
+    threshold: 1.0
+    current_output:
+      ok: true
+      fields: ["job_id", "status", "idempotent", "latency_ms"]

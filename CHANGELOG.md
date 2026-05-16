@@ -8,15 +8,19 @@
   - `accuracy_stats(region, last_n)` — per-bet-type hit rate, streak, last hit date
   - `history(region, limit)` — last N predictions paired with actual draws + per-row hit/miss flag
   - `hot_cold(region, window_days)` — digit frequency map over time window
+- **`_lao_db_connect`** dual-path: tries Unix-socket peer auth first, falls back to TCP+password.
 
 ### Changed
 - **`_lao_db_query`** migrated from `psql` shell-out (pipe-delim parsing) to `psycopg` with parameterised queries.
 - Closes SQL-injection surface where `prediction_id` was f-string interpolated.
 - Falls back to legacy psql path only if psycopg is missing AND no parameters supplied.
+- **`Hermes.dispatch`** — now injects `action` into payload before invoking the worker task. Without this, workers that route on `payload["action"]` (e.g. lottery, ai_chat) couldn't see the action that Hermes was given. Caller-supplied `action` in payload still wins.
+- **`config/lottery_harness.yaml`** — added `latest_prediction`, `accuracy_stats`, `history`, `hot_cold` to `allowed_actions`. Removed the stale `quality.require_non_empty: [prediction]` rule that rejected every result not shaped like the legacy `predict` action.
 - **App version**: 0.14.0 -> 0.15.0.
 
 ### Notes
 - No new dependencies — `psycopg[binary]>=3.1` already pinned.
+- **Operator action:** `/etc/nami-harness/postgres_password` must contain the actual postgres password (`nami2024` per the working `nami-os.env`). Earlier secret was stale and caused TCP auth fail; service runs as `root` so socket peer auth also fails.
 
 ## 0.14.0 — 2026-05-07
 
