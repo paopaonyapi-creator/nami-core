@@ -1,0 +1,31 @@
+# Phase 28 — git MCP server config.
+# Read-mostly. push/force-push gated to a tight role set per
+# GOVERNANCE §5 capability scopes (researcher cannot push).
+
+name: git
+command:
+  - npx
+args:
+  - -y
+  - "@modelcontextprotocol/server-git"
+  - --repository
+  - "${NAMI_GIT_REPO}"
+env:
+  NAMI_GIT_REPO: "/opt/nami/agent-workspace"
+allowed_paths:
+  - /opt/nami/agent-workspace
+network: true                      # git fetch/push needs network
+timeout_seconds: 60
+scopes:
+  - tool: status
+    roles: ["agent", "researcher"]
+  - tool: log
+    roles: ["agent", "researcher"]
+  - tool: diff
+    roles: ["agent", "researcher"]
+  - tool: commit
+    roles: ["agent"]
+  - tool: push
+    roles: ["agent"]               # researcher denied (Phase 28 §validation #4)
+  - tool: force_push
+    roles: []                      # nobody by default; require explicit ADR

@@ -1,0 +1,28 @@
+# Phase 28 — filesystem MCP server config.
+# Bound to a single workspace root. No network. Read by default; only
+# specific roles may write.
+
+name: filesystem
+command:
+  - npx
+args:
+  - -y
+  - "@modelcontextprotocol/server-filesystem"
+  - "${NAMI_FS_ROOT}"
+env:
+  NAMI_FS_ROOT: "/opt/nami/agent-workspace"
+allowed_paths:
+  - /opt/nami/agent-workspace
+network: false
+timeout_seconds: 30
+scopes:
+  - tool: read
+    roles: ["agent", "researcher"]
+  - tool: list
+    roles: ["agent", "researcher"]
+  - tool: write
+    roles: ["agent"]
+  - tool: delete
+    roles: ["agent"]
+    constraints:
+      require_confirmation: true
