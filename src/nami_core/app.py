@@ -36,7 +36,8 @@ from nami_core.runtime.obs import configure_otel, cost_metrics_prometheus_lines,
 from nami_core.safety import safety_metrics_prometheus_lines
 from nami_core.runtime.queue.idempotency import idempotency_key
 from nami_core.runtime.queue.jobs_dao import JobsDAO
-from nami_core.runtime.queue.redis_stream import EVENT_STREAM, RedisStream
+from nami_core.runtime.queue.redis_stream import DEAD_STREAM, EVENT_STREAM, RedisStream
+from nami_core.runtime.queue.dlq_scan import scan_dlq
 from nami_core.runtime.queue.safety_gate import SafetyRejection, safe_enqueue
 from nami_core.runtime.queue.types import JobBudget, JobMessage
 from nami_core.runtime.queue.ulid import generate_ulid
@@ -478,6 +479,29 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
 
     # ── Routes ──
 
+    def _dlq_health_snapshot() -> dict[str, Any]:
+        """Return a lightweight DLQ snapshot + D14 detection if any.
+
+        Best-effort: Redis unreachable → returns {"length": 0, "error": ...}.
+        Reads only XLEN — no XRANGE, no per-message scan. Action-failure
+        breakdown is intentionally omitted here; caller-driven sampling
+        can be added later via a dedicated /runtime/dlq endpoint.
+        """
+        try:
+            client = app.state.job_stream._get_client()  # noqa: SLF001
+            dlq_length = int(client.xlen(DEAD_STREAM))
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            return {"length": 0, "stream": DEAD_STREAM, "error": f"xlen_failed: {exc}"}
+        result = scan_dlq(dlq_length=dlq_length)
+        snapshot: dict[str, Any] = {"length": dlq_length, "stream": DEAD_STREAM}
+        if result.detection is not None:
+            snapshot["detection"] = {
+                "pattern": result.detection.pattern,
+                "action": result.detection.action,
+                "reason": result.detection.reason,
+            }
+        return snapshot
+
     @app.get("/runtime/health")
     async def runtime_health(request: Request):
         Metrics.request_count += 1
@@ -489,6 +513,7 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             "tools": len(app.state.tool_registry.list()),
             "jobs": len(app.state.runtime_jobs.list()),
             "scheduler": app.state.scheduler.status() if app.state.scheduler else {},
+            "dlq": _dlq_health_snapshot(),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
