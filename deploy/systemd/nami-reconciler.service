@@ -1,0 +1,19 @@
+[Unit]
+Description=Nami Core stuck-job reconciler
+After=nami-core.service postgresql.service redis-server.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/nami-harness/worker.env
+WorkingDirectory=/opt/nami/current
+ExecStart=/opt/nami/current/.venv/bin/python -m nami_core.runtime.reconcile
+StandardOutput=journal
+StandardError=journal
+User=nami
+Group=nami
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/nami /opt/nami
+ProtectHome=yes
+PrivateTmp=yes
