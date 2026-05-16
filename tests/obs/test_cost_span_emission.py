@@ -19,7 +19,7 @@ def test_cost_span_emits_attributes():
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
-    previous_provider = trace.get_tracer_provider()
+    previous_provider = trace._TRACER_PROVIDER
     trace._TRACER_PROVIDER = provider
     try:
         with cost_span("test.cost", model="openai:gpt-4o-mini", tokens_in=1000, tokens_out=1000, role="tester"):
