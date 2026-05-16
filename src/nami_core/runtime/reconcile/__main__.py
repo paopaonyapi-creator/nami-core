@@ -19,6 +19,10 @@ import sys
 
 from nami_core.runtime.queue.jobs_dao import JobsDAO
 from nami_core.runtime.queue.redis_stream import RedisStream
+from nami_core.runtime.reconcile.heartbeat_health import (
+    check_heartbeat_health,
+    probes_from_running,
+)
 from nami_core.runtime.reconcile.jobs_reconciler import JobsReconciler
 from nami_core.runtime.reconcile.orphan_processes import detect_orphan_workers
 
@@ -28,11 +32,34 @@ logging.basicConfig(level=os.environ.get("NAMI_LOG_LEVEL", "INFO"))
 
 def main() -> int:
     dao = JobsDAO()
-    reconciler = JobsReconciler(dao=_DAOAdapter(dao))
+    dao_adapter = _DAOAdapter(dao)
+    reconciler = JobsReconciler(dao=dao_adapter)
     job_report = reconciler.run()
 
     redis = RedisStream()
-    orphan_report = detect_orphan_workers(_RedisAdapter(redis))
+    redis_adapter = _RedisAdapter(redis)
+    orphan_report = detect_orphan_workers(redis_adapter)
+
+    # D13: heartbeat-missing detection over the running jobs the reconciler
+    # already inspected. Best-effort; failures don't block the CLI.
+    heartbeat_detections: list[dict] = []
+    try:
+        live_workers = {_worker_id_from_key(k) for k in redis_adapter.list_worker_heartbeats()}
+
+        def _has_heartbeat(worker_id: str) -> bool:
+            return worker_id in live_workers
+
+        running_rows = dao_adapter.list_running()
+        probes = probes_from_running(running_rows, _has_heartbeat)
+        for det in check_heartbeat_health(probes):
+            heartbeat_detections.append({
+                "pattern": det.pattern,
+                "action": det.action,
+                "reason": det.reason,
+                "metadata": det.metadata,
+            })
+    except Exception as exc:  # noqa: BLE001 — best-effort; daemon never crashes on D13
+        heartbeat_detections.append({"error": f"d13_check_failed: {exc}"})
 
     print(
         json.dumps(
@@ -46,6 +73,7 @@ def main() -> int:
                     for o in orphan_report.orphans
                 ],
                 "orphan_errors": orphan_report.errors,
+                "heartbeat_detections": heartbeat_detections,
             },
             ensure_ascii=False,
         )
@@ -56,6 +84,12 @@ def main() -> int:
     if job_report.marked_dead:
         return 2
     return 0
+
+
+def _worker_id_from_key(key: str) -> str:
+    """Strip `nami:worker:` prefix to get the bare worker_id."""
+    prefix = "nami:worker:"
+    return key[len(prefix):] if key.startswith(prefix) else key
 
 
 class _DAOAdapter:
