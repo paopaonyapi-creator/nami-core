@@ -132,6 +132,20 @@ def _usage_tokens(data: dict[str, Any]) -> tuple[int, int]:
 class InferenceGateway:
     def __init__(self, policy: InferencePolicy | None = None) -> None:
         self.policy = policy or load_inference_policy()
+        # Per-model rolling cost+latency window for D10/D11 anomaly detection.
+        # Process-local; fine for T1 single-node. Resets on restart.
+        # Type kept as `Any` to avoid importing `nami_core.agent.safety_metrics`
+        # at module load (circular: agent.planner imports this module).
+        self._call_stats: dict[str, Any] = {}
+
+    def _stats_for(self, model: str):
+        from nami_core.agent.safety_metrics import InferenceCallStats
+
+        stats = self._call_stats.get(model)
+        if stats is None:
+            stats = InferenceCallStats()
+            self._call_stats[model] = stats
+        return stats
 
     def complete(self, request: InferenceRequest) -> InferenceResponse:
         if request.stream:
@@ -172,6 +186,7 @@ class InferenceGateway:
             span.set_attribute("cost.usd", cost_usd)
             span.set_attribute("latency.ms", latency_ms)
             record_cost_metric("inference", request.model, cost_usd=cost_usd, tokens_in=tokens_in, tokens_out=tokens_out)
+            self._record_call_anomalies(request.model, cost_usd, latency_ms)
             return InferenceResponse(
                 content=content,
                 model_used=model_used,
@@ -181,6 +196,24 @@ class InferenceGateway:
                 latency_ms=latency_ms,
                 cached=False,
             )
+
+    def _record_call_anomalies(self, model: str, cost_usd: float, latency_ms: int) -> None:
+        """D10/D11: feed call into rolling stats; emit detections to the
+        safety metric counter. Best-effort: any failure here is swallowed
+        so the inference path never crashes on observability issues.
+        """
+        try:
+            from nami_core.agent.safety_metrics import check_call_anomaly
+            from nami_core.safety.runner import _emit as _emit_safety_metric
+
+            stats = self._stats_for(model)
+            stats.record(cost_usd=cost_usd, latency_ms=float(latency_ms))
+            for det in check_call_anomaly(
+                role=model, cost_usd=cost_usd, latency_ms=float(latency_ms), stats=stats
+            ):
+                _emit_safety_metric(det.pattern, det.action)
+        except Exception:  # noqa: BLE001 — observability never blocks inference
+            return
 
 
 __all__ = ["InferenceGateway", "InferencePolicy", "InferenceRequest", "InferenceResponse", "InferenceRoute", "load_inference_policy"]
