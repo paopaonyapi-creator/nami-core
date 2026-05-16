@@ -43,7 +43,24 @@ psql $NAMI_JOBS_DSN -f migrations/0001_jobs_table.sql
 
 1. `POST /dispatch` with `lottery.backtest_v6` → job enqueued in Redis + row inserted in `jobs` table.
 2. `nami-worker` consumes from `nami:jobs`, updates job status, and emits events into `nami:events`.
-3. `nami-core` bridges `nami:events` → `/runtime/events` SSE + WebSocket broadcast.
+3. Clients poll `/runtime/jobs/{job_id}` for the queue-backed job row until it reaches a terminal status.
+4. `nami-core` bridges `nami:events` → `/runtime/events` SSE + WebSocket broadcast.
+
+## Worker Validation
+
+Run the worker startup validation without connecting to Redis:
+
+```bash
+NAMI_WORKER=status python -m nami_core.runtime.queue.worker --dry-run
+```
+
+Expected output:
+
+```text
+worker ready
+```
+
+Job status updates are guarded by the Phase 26.1 state machine. Illegal transitions raise before mutating the `jobs` row.
 
 ## Rollback
 

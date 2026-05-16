@@ -453,6 +453,25 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {"ok": True, **_dump_model(result)}
 
+    def _queue_job_response(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": row.get("id"),
+            "requested_action": row.get("action"),
+            "status": row.get("status"),
+            "payload": row.get("payload"),
+            "result": row.get("result"),
+            "error": row.get("error"),
+            "trace_id": row.get("trace_id"),
+            "parent_id": row.get("parent_id"),
+            "attempt": row.get("attempt"),
+            "worker_id": row.get("worker_id"),
+            "enqueued_at": row.get("enqueued_at"),
+            "started_at": row.get("started_at"),
+            "finished_at": row.get("finished_at"),
+            "updated_at": row.get("updated_at"),
+            "source": "queue",
+        }
+
     # ── Routes ──
 
     @app.get("/runtime/health")
@@ -748,9 +767,12 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
     async def runtime_job_detail(job_id: str):
         Metrics.request_count += 1
         job = app.state.runtime_jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
-        return job.to_dict()
+        if job is not None:
+            return job.to_dict()
+        queue_job = app.state.jobs_dao.get_by_id(job_id)
+        if queue_job is not None:
+            return _queue_job_response(queue_job)
+        raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
 
     @app.get("/runtime/jobs/{job_id}/recovery/preview")
     async def runtime_job_recovery_preview(job_id: str):

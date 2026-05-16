@@ -12,6 +12,23 @@ from nami_core.runtime.queue.types import JobBudget
 
 
 JOB_STATUSES = {"queued", "running", "succeeded", "failed", "dead", "cancelled"}
+ALLOWED_TRANSITIONS = {
+    "queued": {"running", "cancelled"},
+    "running": {"running", "succeeded", "failed", "dead", "cancelled"},
+    "failed": {"queued", "dead"},
+    "succeeded": set(),
+    "dead": set(),
+    "cancelled": set(),
+}
+
+
+def validate_transition(current_status: str, next_status: str) -> None:
+    if current_status not in JOB_STATUSES:
+        raise ValueError(f"invalid current status: {current_status}")
+    if next_status not in JOB_STATUSES:
+        raise ValueError(f"invalid next status: {next_status}")
+    if next_status not in ALLOWED_TRANSITIONS[current_status]:
+        raise ValueError(f"illegal job status transition: {current_status} -> {next_status}")
 
 
 class JobsDAO:
@@ -25,6 +42,13 @@ class JobsDAO:
 
             return psycopg.connect(self.dsn)
         return get_connection(self.dbname)
+
+    def _require_transition(self, cur, job_id: str, next_status: str) -> None:
+        cur.execute("SELECT status FROM jobs WHERE id = %s", (job_id,))
+        row = cur.fetchone()
+        if not row:
+            raise ValueError(f"job not found: {job_id}")
+        validate_transition(str(row[0]), next_status)
 
     def ensure_schema(self) -> None:
         statements = [
@@ -117,6 +141,7 @@ class JobsDAO:
     def mark_running(self, job_id: str, worker_id: str) -> None:
         with self._connect() as conn:
             with conn.cursor() as cur:
+                self._require_transition(cur, job_id, "running")
                 cur.execute(
                     """
                     UPDATE jobs
@@ -131,6 +156,7 @@ class JobsDAO:
         payload = json.dumps(result, ensure_ascii=False, default=str)
         with self._connect() as conn:
             with conn.cursor() as cur:
+                self._require_transition(cur, job_id, "succeeded")
                 cur.execute(
                     """
                     UPDATE jobs
@@ -145,6 +171,7 @@ class JobsDAO:
         payload = json.dumps(error, ensure_ascii=False, default=str)
         with self._connect() as conn:
             with conn.cursor() as cur:
+                self._require_transition(cur, job_id, "failed")
                 cur.execute(
                     """
                     UPDATE jobs
@@ -159,6 +186,7 @@ class JobsDAO:
         payload = json.dumps(error, ensure_ascii=False, default=str)
         with self._connect() as conn:
             with conn.cursor() as cur:
+                self._require_transition(cur, job_id, "dead")
                 cur.execute(
                     """
                     UPDATE jobs
@@ -172,6 +200,7 @@ class JobsDAO:
     def requeue(self, job_id: str, attempt: int) -> None:
         with self._connect() as conn:
             with conn.cursor() as cur:
+                self._require_transition(cur, job_id, "queued")
                 cur.execute(
                     """
                     UPDATE jobs
@@ -183,4 +212,4 @@ class JobsDAO:
             conn.commit()
 
 
-__all__ = ["JobsDAO", "JOB_STATUSES"]
+__all__ = ["JobsDAO", "JOB_STATUSES", "validate_transition"]

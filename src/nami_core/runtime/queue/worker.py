@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
 import importlib
 import json
 import logging
@@ -102,7 +103,10 @@ class QueueWorker:
     async def _run(self) -> None:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, self._stop.set)
+            try:
+                loop.add_signal_handler(sig, self._stop.set)
+            except NotImplementedError:
+                signal.signal(sig, lambda *_args: self._stop.set())
 
         self.redis.ensure_group(self.group)
         await asyncio.gather(self._heartbeat_loop(), self._consume_loop())
@@ -208,6 +212,7 @@ class QueueWorker:
             return output
 
     def _handle_mismatch(self, msg_id: str, message: JobMessage) -> None:
+        self.jobs.mark_running(message.id, self.consumer_id)
         error = {"error": f"worker mismatch for {message.action}"}
         self._finalize_message(msg_id, message, None, error, 0)
 
@@ -254,10 +259,17 @@ class QueueWorker:
         self.redis.ack(self.group, msg_id)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args(argv)
     worker_name = os.environ.get("NAMI_WORKER")
     if not worker_name:
         raise SystemExit("NAMI_WORKER must be set (e.g. lottery)")
+    if args.dry_run:
+        QueueWorker(worker_name)
+        print("worker ready")
+        return
     worker = QueueWorker(worker_name)
     worker.start()
 
