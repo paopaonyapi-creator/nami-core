@@ -57,6 +57,10 @@ class DetectorContext:
     child_payload: dict[str, Any] | None = None
     embedding_query_version: str | None = None
     embedding_corpus_versions: list[str] = field(default_factory=list)
+    iter_cost_history: list[float] = field(default_factory=list)
+    iter_budget_total: float = 0.0
+    parent_chain: list[str] = field(default_factory=list)
+    parent_status: str | None = None
 
 
 @dataclass
