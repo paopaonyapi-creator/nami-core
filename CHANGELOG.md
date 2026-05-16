@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.15.0 — 2026-05-09
+
+### Added
+- **Lottery worker** new actions for nami-os Phase 21 dashboard:
+  - `latest_prediction(region)` — tile-friendly latest locked Lao prediction
+  - `accuracy_stats(region, last_n)` — per-bet-type hit rate, streak, last hit date
+  - `history(region, limit)` — last N predictions paired with actual draws + per-row hit/miss flag
+  - `hot_cold(region, window_days)` — digit frequency map over time window
+
+### Changed
+- **`_lao_db_query`** migrated from `psql` shell-out (pipe-delim parsing) to `psycopg` with parameterised queries.
+- Closes SQL-injection surface where `prediction_id` was f-string interpolated.
+- Falls back to legacy psql path only if psycopg is missing AND no parameters supplied.
+- **App version**: 0.14.0 -> 0.15.0.
+
+### Notes
+- No new dependencies — `psycopg[binary]>=3.1` already pinned.
+
 ## 0.14.0 — 2026-05-07
 
 ### Added

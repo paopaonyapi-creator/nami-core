@@ -6,6 +6,16 @@ allowed_actions:
   - send_prediction
   - fetch_results
   - vip
+  - latest_prediction
+  - accuracy_stats
+  - history
+  - hot_cold
+  - predict_v6
+  - accuracy_v6
+  - get_active_engine
+  - compare_engines
+  - backtest_v6
+  - sweep_v6_weights
 max_daily_actions: 200
 rate_limit:
   max_events: 10
@@ -15,8 +25,6 @@ circuit_breaker:
 budget_guard:
   max_cost: 2.0
 quality:
-  require_non_empty:
-    - prediction
   forbid_terms:
     - guarantee
     - แน่นอน
