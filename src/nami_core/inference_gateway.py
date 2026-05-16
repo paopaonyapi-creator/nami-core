@@ -130,6 +130,12 @@ def _usage_tokens(data: dict[str, Any]) -> tuple[int, int]:
 
 
 class InferenceGateway:
+    # Hard cap on per-model rolling-stats entries. Prevents an attacker
+    # (or misconfigured client) sending random model strings from filling
+    # _call_stats unbounded. 100 distinct models is well above any realistic
+    # T1 deployment; eviction is FIFO insertion-order on overflow.
+    _STATS_CAP = 100
+
     def __init__(self, policy: InferencePolicy | None = None) -> None:
         self.policy = policy or load_inference_policy()
         # Per-model rolling cost+latency window for D10/D11 anomaly detection.
@@ -145,6 +151,12 @@ class InferenceGateway:
         if stats is None:
             stats = InferenceCallStats()
             self._call_stats[model] = stats
+            # Bounded: evict oldest (FIFO) if we crossed the cap. Python 3.7+
+            # dicts preserve insertion order; popitem(last=False)-equivalent
+            # is iter(...).__next__().
+            if len(self._call_stats) > self._STATS_CAP:
+                oldest = next(iter(self._call_stats))
+                self._call_stats.pop(oldest, None)
         return stats
 
     def complete(self, request: InferenceRequest) -> InferenceResponse:
@@ -212,7 +224,11 @@ class InferenceGateway:
                 role=model, cost_usd=cost_usd, latency_ms=float(latency_ms), stats=stats
             ):
                 _emit_safety_metric(det.pattern, det.action)
-        except Exception:  # noqa: BLE001 — observability never blocks inference
+        except Exception as exc:  # noqa: BLE001 — observability never blocks inference
+            import logging
+            logging.getLogger("nami_core.inference_gateway").debug(
+                "call-anomaly recording failed: %s", exc
+            )
             return
 
 

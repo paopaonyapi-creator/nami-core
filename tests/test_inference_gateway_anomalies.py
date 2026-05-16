@@ -77,3 +77,15 @@ def test_record_anomalies_swallows_internal_failures() -> None:
     g._stats_for = lambda model: (_ for _ in ()).throw(RuntimeError("boom"))
     g._record_call_anomalies("gpt-4o-mini", cost_usd=0.01, latency_ms=200)
     # No detections, no exception — that's the contract.
+
+
+def test_call_stats_dict_is_bounded_to_cap() -> None:
+    """Hardening: feeding many distinct model names must not grow _call_stats unbounded."""
+    g = _new_gateway()
+    cap = InferenceGateway._STATS_CAP
+    for i in range(cap + 50):
+        g._record_call_anomalies(f"model-{i}", cost_usd=0.01, latency_ms=100)
+    assert len(g._call_stats) <= cap
+    # FIFO eviction: oldest entries gone, latest still present.
+    assert "model-0" not in g._call_stats
+    assert f"model-{cap + 49}" in g._call_stats

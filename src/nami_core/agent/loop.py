@@ -191,7 +191,11 @@ class AgentLoop:
             return 0
         try:
             value = int(self.prompt_token_estimator(state))
-        except Exception:  # noqa: BLE001 — estimator must never crash the loop
+        except Exception as exc:  # noqa: BLE001 — estimator must never crash the loop
+            import logging
+            logging.getLogger("nami_core.agent.loop").warning(
+                "prompt_token_estimator failed: %s", exc
+            )
             return 0
         return max(0, value)
 

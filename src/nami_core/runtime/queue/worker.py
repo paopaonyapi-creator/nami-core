@@ -8,6 +8,7 @@ import importlib
 import json
 import logging
 import os
+import random
 import signal
 import socket
 import time
@@ -132,6 +133,7 @@ class QueueWorker:
 
     async def _consume_loop(self) -> None:
         semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
+        backoff_seconds = 2.0
         while not self._stop.is_set():
             try:
                 claimed = await asyncio.to_thread(self.redis.autoclaim, self.group, self.consumer_id)
@@ -142,12 +144,27 @@ class QueueWorker:
                 for msg_id, fields in messages:
                     await self._schedule_message(msg_id, fields, semaphore)
             except Exception as exc:
-                logger.warning("Queue read failed: %s", exc)
-                await asyncio.sleep(2)
+                logger.warning("Queue read failed: %s (sleep %.1fs)", exc, backoff_seconds)
+                jitter = backoff_seconds * 0.25 * random.random()
+                await asyncio.sleep(backoff_seconds + jitter)
+                backoff_seconds = min(backoff_seconds * 2, 30.0)
+            else:
+                backoff_seconds = 2.0  # success → reset
 
     async def _schedule_message(self, msg_id: str, fields: dict[str, str], semaphore: asyncio.Semaphore) -> None:
         await semaphore.acquire()
-        asyncio.create_task(self._handle_message(msg_id, fields, semaphore))
+        task = asyncio.create_task(self._handle_message(msg_id, fields, semaphore))
+        task.add_done_callback(self._observe_task)
+
+    @staticmethod
+    def _observe_task(task: asyncio.Task) -> None:
+        # Surface fire-and-forget task crashes; semaphore release in
+        # _handle_message's `finally` already prevents stuck slots.
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("worker task crashed: %s", exc, exc_info=exc)
 
     async def _handle_message(self, msg_id: str, fields: dict[str, str], semaphore: asyncio.Semaphore) -> None:
         try:

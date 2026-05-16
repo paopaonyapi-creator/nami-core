@@ -11,6 +11,7 @@ import os
 import sqlite3
 import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
@@ -225,8 +226,8 @@ class WSManager:
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 asyncio.ensure_future(self.broadcast(event, data))
-        except RuntimeError:
-            pass
+        except RuntimeError as exc:
+            logger.warning("broadcast_sync skipped (no running loop): %s", exc)
 
 
 # ── Rate limiter (in-memory, per-IP) ──
@@ -296,7 +297,7 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
     app.state.ws_manager = ws_manager
     app.state.tool_registry = ToolRegistry.from_hermes(app.state.hermes)
     app.state.runtime_jobs = RuntimeJobStore(os.environ.get("NAMI_RUNTIME_JOBS_FILE") or None)
-    app.state.runtime_events = []
+    app.state.runtime_events = deque(maxlen=500)
     app.state.mcp_config = load_mcp_config(mcp_config_file) if mcp_config_file else McpConfig()
     app.state.mcp_client = McpClientManager(app.state.mcp_config)
     app.state.otel_enabled = configure_otel()
@@ -314,9 +315,8 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
             stop_event.set()
 
     def record_runtime_event(event: RuntimeEvent) -> None:
+        # Bounded deque (maxlen=500) handles eviction; old slice-rewrite removed.
         app.state.runtime_events.append(event)
-        if len(app.state.runtime_events) > 500:
-            app.state.runtime_events = app.state.runtime_events[-500:]
 
     def _build_job_budget() -> JobBudget:
         return JobBudget(
