@@ -20,6 +20,8 @@ OTel + persistence (Phase 27 PR-B follow-up):
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
@@ -31,6 +33,8 @@ from nami_core.agent.budget import (
 from nami_core.agent.state import AgentState, AgentStep
 from nami_core.agent.tools import ToolRegistry, default_registry
 from nami_core.runtime.obs import cost_span, record_cost_metric
+from nami_core.safety.runner import DetectorRunner
+from nami_core.safety.types import DetectorContext, DetectorOutcome
 
 if TYPE_CHECKING:
     from nami_core.agent.dao import AgentTracesDAO
@@ -125,16 +129,22 @@ class AgentLoop:
     budget: RecursionBudget = field(default_factory=RecursionBudget)
     traces_dao: "AgentTracesDAO | None" = None
     on_halt: Callable[[AgentState, str], None] | None = None
+    safety_runner: DetectorRunner | None = None
+    agent_role: str = "agent"
 
     def run(self, state: AgentState) -> LoopOutcome:
         try:
             while not state.done:
                 enforce_budget(state, self.budget)
                 self._step("nami.agent.plan", state, lambda s: plan_node(s, self.planner))
+                if self._safety_halt(state, phase="post_plan"):
+                    break
                 if state.done:
                     break
                 enforce_budget(state, self.budget)
                 self._step("nami.agent.act", state, lambda s: act_node(s, self.registry))
+                if self._safety_halt(state, phase="post_act"):
+                    break
                 if state.done:
                     break
                 self._step("nami.agent.observe", state, observe_node)
@@ -156,6 +166,60 @@ class AgentLoop:
             halted=state.halt_reason is not None,
             halt_reason=state.halt_reason,
             final_answer=state.final_answer,
+        )
+
+    def _safety_halt(self, state: AgentState, *, phase: str) -> bool:
+        """Run safety detectors; emit halt step + return True if any reject/halt fires."""
+        if self.safety_runner is None:
+            return False
+        ctx = self._build_safety_context(state)
+        outcome = self.safety_runner.run(ctx)
+        if not outcome.detections:
+            return False
+        terminal = [d for d in outcome.detections if d.action in ("reject", "halt_branch", "halt_action", "halt_role")]
+        if not terminal:
+            return False
+        first = terminal[0]
+        reason = f"safety:{first.pattern}:{first.action}"
+        state.done = True
+        state.halt_reason = reason
+        halt_step = AgentStep(
+            kind="halt",
+            content=f"{first.pattern} ({phase}): {first.reason}",
+            error=reason,
+        )
+        state.add_step(halt_step)
+        self._persist(state, halt_step)
+        if self.on_halt is not None:
+            self.on_halt(state, reason)
+        return True
+
+    def _build_safety_context(self, state: AgentState) -> DetectorContext:
+        plan_hashes: list[str] = []
+        action_payloads: list[tuple[str, str]] = []
+        roles: list[str] = []
+        last_plan: dict[str, Any] | None = None
+        for step in state.steps:
+            if step.kind == "plan":
+                payload = {
+                    "tool": step.tool,
+                    "content": step.content,
+                    "args": step.tool_args,
+                }
+                plan_hashes.append(_sha256_json(payload))
+                last_plan = {"tool": step.tool, "args": step.tool_args, "content": step.content}
+                roles.append(self.agent_role)
+            elif step.kind == "act" and step.tool is not None:
+                action_payloads.append((step.tool, _sha256_json(step.tool_args or {})))
+        return DetectorContext(
+            job_id=state.job_id,
+            role=self.agent_role,
+            iteration=state.iters,
+            plan=last_plan,
+            plan_hash_history=plan_hashes,
+            action_payload_history=action_payloads,
+            tool_registry=list(self.registry.names()),
+            role_history=roles,
         )
 
     def _step(self, span_name: str, state: AgentState, fn: Callable[[AgentState], AgentState]) -> None:
@@ -228,6 +292,14 @@ def _last_step_of(state: AgentState, kind: str) -> AgentStep | None:
         if step.kind == kind:
             return step
     return None
+
+
+def _sha256_json(payload: Any) -> str:
+    try:
+        canonical = json.dumps(payload, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        canonical = repr(payload)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 __all__ = [
