@@ -22,6 +22,7 @@ from typing import Any
 from nami_core.agent.tools import Tool, ToolResult
 from nami_core.mcp.audit import MCPAuditDAO
 from nami_core.mcp.registry import MCPRegistry
+from nami_core.mcp.safety_wrap import MCPTimeoutTracker, check_file_access
 from nami_core.mcp.sandbox import Sandbox, default_sandbox
 from nami_core.mcp.types import (
     CapabilityDenied,
@@ -40,6 +41,7 @@ class MCPBridge:
     registry: MCPRegistry
     sandbox: Sandbox = field(default_factory=default_sandbox)
     audit: MCPAuditDAO | None = None
+    timeout_tracker: MCPTimeoutTracker = field(default_factory=MCPTimeoutTracker)
 
     def invoke(self, request: MCPRequest) -> MCPResponse:
         # 1. Capability check (server existence + scope authorization).
@@ -56,19 +58,36 @@ class MCPBridge:
 
         spec = self.registry.get(request.server)
 
-        # 2. Sandbox-level path validation + subprocess execution.
+        # 2. D18 pre-flight: refuse path-shaped args outside allowed roots.
+        # Sandbox enforces this at the OS layer too; this surfaces it as
+        # an audit row before subprocess spawn. Traversal reason maps to
+        # 'escape' to preserve the Phase 28 audit-status contract; other
+        # reasons (path outside allowed roots, no roots configured) map
+        # to 'denied'.
+        d18_detections = check_file_access(request, spec)
+        if d18_detections:
+            first = d18_detections[0]
+            d18_reason = first.metadata.get("reason")
+            audit_status = "escape" if d18_reason == "traversal" else "denied"
+            response = MCPResponse(ok=False, error=first.reason)
+            self._audit(request, response, audit_status, first.reason)
+            return response
+
+        # 3. Sandbox-level path validation + subprocess execution.
         try:
             response = self.sandbox.execute(spec, request)
         except SandboxEscape as exc:
             response = MCPResponse(ok=False, error=str(exc))
             self._audit(request, response, "escape", str(exc))
+            self.timeout_tracker.record(request.server, "escape")
             return response
         except Exception as exc:  # noqa: BLE001 — unknown sandbox failure
             response = MCPResponse(ok=False, error=str(exc))
             self._audit(request, response, "error", str(exc))
+            self.timeout_tracker.record(request.server, "error")
             return response
 
-        # 3. Map response → audit status.
+        # 4. Map response → audit status.
         if response.ok:
             status = "ok"
             err = None
@@ -79,6 +98,9 @@ class MCPBridge:
             status = "error"
             err = response.error
         self._audit(request, response, status, err)
+        # 5. D15: feed outcome to per-server timeout tracker. Caller
+        # inspects `bridge.timeout_tracker.unhealthy_servers()` periodically.
+        self.timeout_tracker.record(request.server, status)
         return response
 
     def _audit(
