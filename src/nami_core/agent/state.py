@@ -47,6 +47,7 @@ class AgentState:
     cost_usd_total: float = 0.0
     tokens_in_total: int = 0
     tokens_out_total: int = 0
+    rag_chunks: list[str] = field(default_factory=list)
     done: bool = False
     final_answer: str | None = None
     halt_reason: str | None = None
@@ -69,6 +70,7 @@ class AgentState:
             "cost_usd_total": self.cost_usd_total,
             "tokens_in_total": self.tokens_in_total,
             "tokens_out_total": self.tokens_out_total,
+            "rag_chunks": list(self.rag_chunks),
             "done": self.done,
             "final_answer": self.final_answer,
             "halt_reason": self.halt_reason,

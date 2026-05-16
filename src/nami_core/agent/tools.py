@@ -25,6 +25,7 @@ class Tool:
     name: str
     description: str
     fn: ToolFn
+    output_schema: Any | None = None
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
         try:
@@ -52,6 +53,9 @@ class ToolRegistry:
 
     def invoke(self, name: str, args: dict[str, Any]) -> ToolResult:
         return self.get(name).invoke(args)
+
+    def output_schema(self, name: str) -> Any | None:
+        return self.get(name).output_schema
 
 
 def default_registry() -> ToolRegistry:

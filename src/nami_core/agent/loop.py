@@ -136,6 +136,7 @@ class AgentLoop:
         try:
             while not state.done:
                 enforce_budget(state, self.budget)
+                self._safety_filter_rag(state)
                 self._step("nami.agent.plan", state, lambda s: plan_node(s, self.planner))
                 if self._safety_halt(state, phase="post_plan"):
                     break
@@ -168,11 +169,18 @@ class AgentLoop:
             final_answer=state.final_answer,
         )
 
+    def _safety_filter_rag(self, state: AgentState) -> None:
+        if self.safety_runner is None or not state.rag_chunks:
+            return
+        outcome = self.safety_runner.run(self._build_safety_context(state, phase="pre_plan"))
+        if outcome.filtered_chunks is not None:
+            state.rag_chunks = list(outcome.filtered_chunks)
+
     def _safety_halt(self, state: AgentState, *, phase: str) -> bool:
         """Run safety detectors; emit halt step + return True if any reject/halt fires."""
         if self.safety_runner is None:
             return False
-        ctx = self._build_safety_context(state)
+        ctx = self._build_safety_context(state, phase=phase)
         outcome = self.safety_runner.run(ctx)
         if not outcome.detections:
             return False
@@ -194,11 +202,22 @@ class AgentLoop:
             self.on_halt(state, reason)
         return True
 
-    def _build_safety_context(self, state: AgentState) -> DetectorContext:
+    def _build_safety_context(self, state: AgentState, *, phase: str = "post_plan") -> DetectorContext:
+        if phase == "pre_plan":
+            return DetectorContext(
+                job_id=state.job_id,
+                role=self.agent_role,
+                iteration=state.iters,
+                rag_chunks=list(state.rag_chunks),
+                tool_registry=list(self.registry.names()),
+            )
+
         plan_hashes: list[str] = []
         action_payloads: list[tuple[str, str]] = []
         roles: list[str] = []
         last_plan: dict[str, Any] | None = None
+        last_tool_output: Any = None
+        last_tool_output_schema: Any = None
         for step in state.steps:
             if step.kind == "plan":
                 payload = {
@@ -211,6 +230,12 @@ class AgentLoop:
                 roles.append(self.agent_role)
             elif step.kind == "act" and step.tool is not None:
                 action_payloads.append((step.tool, _sha256_json(step.tool_args or {})))
+                if step.tool_result is not None:
+                    last_tool_output = step.tool_result.get("output")
+                    try:
+                        last_tool_output_schema = self.registry.output_schema(step.tool)
+                    except KeyError:
+                        last_tool_output_schema = None
         return DetectorContext(
             job_id=state.job_id,
             role=self.agent_role,
@@ -219,6 +244,8 @@ class AgentLoop:
             plan_hash_history=plan_hashes,
             action_payload_history=action_payloads,
             tool_registry=list(self.registry.names()),
+            tool_output=last_tool_output if phase == "post_act" else None,
+            tool_output_schema=last_tool_output_schema if phase == "post_act" else None,
             role_history=roles,
         )
 
