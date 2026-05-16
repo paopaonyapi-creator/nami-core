@@ -10,12 +10,18 @@ driver in `run_agent` changes; nodes (`plan_node`, `act_node`,
 Single-dispatch contract (RUNTIME §6): planning calls go through a
 `Planner` protocol. The default in-process planner uses
 `nami_core.inference_gateway.InferenceGateway`. Tests pass fake planners.
+
+OTel + persistence (Phase 27 PR-B follow-up):
+  - Each node is wrapped in `cost_span(role="agent")` so spans appear
+    under nami_cost_*_total{role="agent"} (RUNTIME §9).
+  - Optional `traces_dao` persists each step to `agent_traces` table.
+    Persistence is best-effort; failures don't abort the loop.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 from nami_core.agent.budget import (
     BudgetExceeded,
@@ -24,6 +30,10 @@ from nami_core.agent.budget import (
 )
 from nami_core.agent.state import AgentState, AgentStep
 from nami_core.agent.tools import ToolRegistry, default_registry
+from nami_core.runtime.obs import cost_span, record_cost_metric
+
+if TYPE_CHECKING:
+    from nami_core.agent.dao import AgentTracesDAO
 
 
 @dataclass
@@ -113,30 +123,32 @@ class AgentLoop:
     planner: Planner
     registry: ToolRegistry = field(default_factory=default_registry)
     budget: RecursionBudget = field(default_factory=RecursionBudget)
+    traces_dao: "AgentTracesDAO | None" = None
     on_halt: Callable[[AgentState, str], None] | None = None
 
     def run(self, state: AgentState) -> LoopOutcome:
         try:
             while not state.done:
                 enforce_budget(state, self.budget)
-                state = plan_node(state, self.planner)
+                self._step("nami.agent.plan", state, lambda s: plan_node(s, self.planner))
                 if state.done:
                     break
                 enforce_budget(state, self.budget)
-                state = act_node(state, self.registry)
+                self._step("nami.agent.act", state, lambda s: act_node(s, self.registry))
                 if state.done:
                     break
-                state = observe_node(state)
+                self._step("nami.agent.observe", state, observe_node)
         except BudgetExceeded as exc:
             state.done = True
             state.halt_reason = str(exc)
-            state.add_step(
-                AgentStep(
-                    kind="halt",
-                    content=str(exc),
-                    error=f"budget_exceeded:{exc.axis}",
-                )
+            halt_step = AgentStep(
+                kind="halt",
+                content=str(exc),
+                error=f"budget_exceeded:{exc.axis}",
             )
+            state.add_step(halt_step)
+            self._persist(state, halt_step)
+            self._record_cost(halt_step)
             if self.on_halt is not None:
                 self.on_halt(state, str(exc))
         return LoopOutcome(
@@ -146,17 +158,64 @@ class AgentLoop:
             final_answer=state.final_answer,
         )
 
+    def _step(self, span_name: str, state: AgentState, fn: Callable[[AgentState], AgentState]) -> None:
+        steps_before = len(state.steps)
+        with cost_span(
+            span_name,
+            role="agent",
+            attributes={
+                "agent.job_id": state.job_id,
+                "agent.trace_id": state.trace_id,
+                "agent.depth": state.depth,
+                "agent.iters": state.iters,
+            },
+        ) as span:
+            fn(state)
+            new_steps = state.steps[steps_before:]
+            for step in new_steps:
+                if step.cost_usd:
+                    span.set_attribute("cost.usd", step.cost_usd)
+                if step.tokens_in:
+                    span.set_attribute("tokens.in", step.tokens_in)
+                if step.tokens_out:
+                    span.set_attribute("tokens.out", step.tokens_out)
+                if step.tool:
+                    span.set_attribute("agent.tool", step.tool)
+                if step.error:
+                    span.set_attribute("agent.error", step.error)
+                self._persist(state, step)
+                self._record_cost(step)
+
+    def _persist(self, state: AgentState, step: AgentStep) -> None:
+        if self.traces_dao is None:
+            return
+        index = len(state.steps) - 1  # step is the last appended
+        self.traces_dao.insert_step(state, step, index)
+
+    @staticmethod
+    def _record_cost(step: AgentStep) -> None:
+        if step.cost_usd or step.tokens_in or step.tokens_out:
+            record_cost_metric(
+                "agent",
+                "agent",
+                cost_usd=step.cost_usd,
+                tokens_in=step.tokens_in,
+                tokens_out=step.tokens_out,
+            )
+
 
 def run_agent(
     state: AgentState,
     planner: Planner,
     registry: ToolRegistry | None = None,
     budget: RecursionBudget | None = None,
+    traces_dao: "AgentTracesDAO | None" = None,
 ) -> LoopOutcome:
     return AgentLoop(
         planner=planner,
         registry=registry or default_registry(),
         budget=budget or RecursionBudget(),
+        traces_dao=traces_dao,
     ).run(state)
 
 
