@@ -12,6 +12,7 @@ pattern, mirroring AgentTracesDAO and MCPAuditDAO).
 
 from __future__ import annotations
 
+from nami_core.memory.recall import RecallOutcome, safe_recall
 from nami_core.memory.types import (
     Episode,
     EpisodeOutcome,
@@ -26,4 +27,6 @@ __all__ = [
     "Embedding",
     "SemanticChunk",
     "QueryResult",
+    "RecallOutcome",
+    "safe_recall",
 ]

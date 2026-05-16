@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nami_core.safety.detectors import d1, d2, d4, d6, d9, d12, d17, d19, d20
+from nami_core.safety.detectors import d1, d2, d4, d6, d9, d12, d16, d17, d19, d20
 from nami_core.safety.types import DetectorContext
 
 

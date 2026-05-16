@@ -32,6 +32,8 @@ class MemoryStore(Protocol):
         model_version: str,
         limit: int = 5,
     ) -> list[QueryResult]: ...
+    def corpus_versions(self, namespace: str) -> list[str]: ...
+
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -97,6 +99,13 @@ class InMemoryStore:
             scored.append(QueryResult(chunk=chunk, score=score))
         scored.sort(key=lambda r: r.score, reverse=True)
         return scored[:limit]
+
+    def corpus_versions(self, namespace: str) -> list[str]:
+        seen: set[str] = set()
+        for chunk in self.chunks:
+            if chunk.namespace == namespace:
+                seen.add(chunk.model_version)
+        return sorted(seen)
 
 
 def _vector_literal(vec: list[float] | None) -> str | None:
@@ -289,6 +298,20 @@ class PgVectorStore:
                 )
             )
         return out
+
+    def corpus_versions(self, namespace: str) -> list[str]:
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT DISTINCT model_version FROM embeddings WHERE namespace = %s",
+                        (namespace,),
+                    )
+                    rows = cur.fetchall()
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.warning("embeddings corpus_versions lookup failed: %s", exc)
+            return []
+        return sorted({str(row[0]) for row in rows if row and row[0]})
 
 
 __all__ = ["MemoryStore", "InMemoryStore", "PgVectorStore"]

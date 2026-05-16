@@ -55,6 +55,8 @@ class DetectorContext:
     temperature: float = 0.0
     parent_payload: dict[str, Any] | None = None
     child_payload: dict[str, Any] | None = None
+    embedding_query_version: str | None = None
+    embedding_corpus_versions: list[str] = field(default_factory=list)
 
 
 @dataclass
