@@ -18,6 +18,11 @@ EVAL_ROOT = Path(__file__).resolve().parent
 if str(EVAL_ROOT) not in sys.path:
     sys.path.insert(0, str(EVAL_ROOT))
 
+# Make `nami_core` importable when runner is invoked from nami-evals/.
+NAMI_CORE_SRC = EVAL_ROOT.parent / "src"
+if NAMI_CORE_SRC.is_dir() and str(NAMI_CORE_SRC) not in sys.path:
+    sys.path.insert(0, str(NAMI_CORE_SRC))
+
 SUITES_DIR = EVAL_ROOT / "suites"
 BASELINES_DIR = EVAL_ROOT / "baselines"
 RESULTS_DIR = EVAL_ROOT / "results"
@@ -126,9 +131,10 @@ def _write_junit(suite_name: str, results: list[CaseResult], output_dir: Path) -
     return path
 
 
-async def run_suite(suite_name: str, *, fail_under: float, baselines_dir: Path, results_dir: Path) -> tuple[bool, float, list[CaseResult], Path]:
+async def run_suite(suite_name: str, *, fail_under: float, baselines_dir: Path, results_dir: Path, suites_dir: Path | None = None) -> tuple[bool, float, list[CaseResult], Path]:
     normalized = _suite_name(suite_name)
-    suite_path = SUITES_DIR / f"{normalized}.yaml"
+    suites_root = Path(suites_dir) if suites_dir is not None else SUITES_DIR
+    suite_path = suites_root / f"{normalized}.yaml"
     suite = _load_yaml(suite_path)
     baseline = _load_baseline(normalized, baselines_dir)
     cases = suite.get("cases")
@@ -138,7 +144,65 @@ async def run_suite(suite_name: str, *, fail_under: float, baselines_dir: Path, 
     score = sum(result.score for result in results) / len(results)
     junit_path = _write_junit(normalized, list(results), results_dir)
     passed = score >= fail_under and all(result.passed for result in results)
+    _check_d3_collusion(normalized, list(results), suites_root=suites_root)
     return passed, score, list(results), junit_path
+
+
+def _check_d3_collusion(suite_name: str, results: list[CaseResult], *, suites_root: Path | None = None) -> None:
+    """SAFETY §7 D3 wiring on the eval-judge surface.
+
+    Treats each (suite, judge_name) pair as an evaluator-instance. A judge
+    that accepts >99% over >=100 cases triggers the D3 alert. Best-effort:
+    any failure (missing helper, missing safety module) is swallowed —
+    eval runner must never crash on observability.
+    """
+    try:
+        from nami_core.agent.safety_eval import EvaluatorAcceptanceTracker
+        from nami_core.safety.runner import _emit as _emit_safety_metric
+    except Exception:
+        return  # nami_core not on path — runner can still score the suite
+
+    by_judge: dict[str, list[bool]] = {}
+    for r in results:
+        # Each CaseResult comes from a specific judge; reload the case to
+        # know which judge ran it. We re-read from the suite file rather
+        # than threading the judge name through CaseResult — keeps the
+        # public dataclass shape unchanged.
+        # Optimisation: cache in dict keyed by case_id.
+        pass
+
+    # Pull judge names out of the suite YAML (read once).
+    suites_dir = suites_root if suites_root is not None else SUITES_DIR
+    suite_yaml = suites_dir / f"{suite_name}.yaml"
+    judges_by_case: dict[str, str] = {}
+    try:
+        suite_data = _load_yaml(suite_yaml)
+        for case in suite_data.get("cases") or []:
+            cid = str(case.get("id") or "")
+            if cid:
+                judges_by_case[cid] = str(case.get("judge") or "exact_match")
+    except Exception:
+        return
+
+    for r in results:
+        judge = judges_by_case.get(r.case_id, "unknown")
+        by_judge.setdefault(judge, []).append(r.passed)
+
+    tracker = EvaluatorAcceptanceTracker(window=max(100, max((len(v) for v in by_judge.values()), default=100)))
+    for judge, decisions in by_judge.items():
+        for accepted in decisions:
+            tracker.record(judge, accepted=accepted)
+        det = tracker.check(judge)
+        if det is None:
+            continue
+        try:
+            _emit_safety_metric(det.pattern, det.action)
+        except Exception:
+            pass
+        print(
+            f"  [safety] D3 alert: judge={judge!r} suite={suite_name} "
+            f"rate={det.metadata['acceptance_rate']:.2%} window={det.metadata['window_size']}"
+        )
 
 
 def _all_suite_names() -> list[str]:
@@ -148,10 +212,20 @@ def _all_suite_names() -> list[str]:
 async def run_command(args: argparse.Namespace) -> int:
     baselines_dir = Path(args.baselines_dir or os.environ.get("NAMI_EVALS_BASELINES_DIR") or BASELINES_DIR)
     results_dir = Path(args.results_dir or os.environ.get("NAMI_EVALS_RESULTS_DIR") or RESULTS_DIR)
-    suite_names = _all_suite_names() if args.all else [_suite_name(args.suite)]
+    suites_dir = Path(args.suites_dir) if args.suites_dir else (Path(os.environ.get("NAMI_EVALS_SUITES_DIR")) if os.environ.get("NAMI_EVALS_SUITES_DIR") else SUITES_DIR)
+    if args.all:
+        suite_names = sorted(p.stem for p in suites_dir.glob("*.yaml"))
+    else:
+        suite_names = [_suite_name(args.suite)]
     exit_code = 0
     for suite_name in suite_names:
-        passed, score, results, junit_path = await run_suite(suite_name, fail_under=args.fail_under, baselines_dir=baselines_dir, results_dir=results_dir)
+        passed, score, results, junit_path = await run_suite(
+            suite_name,
+            fail_under=args.fail_under,
+            baselines_dir=baselines_dir,
+            results_dir=results_dir,
+            suites_dir=suites_dir,
+        )
         failed = len([result for result in results if not result.passed])
         print(f"{suite_name}: score={score:.3f} cases={len(results)} failed={failed} junit={junit_path}")
         if not passed:
@@ -168,6 +242,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--fail-under", type=float, default=0.85)
     run.add_argument("--baselines-dir")
     run.add_argument("--results-dir")
+    run.add_argument("--suites-dir")
     return parser
 
 
