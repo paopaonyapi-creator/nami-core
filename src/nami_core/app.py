@@ -37,6 +37,7 @@ from nami_core.safety import safety_metrics_prometheus_lines
 from nami_core.runtime.queue.idempotency import idempotency_key
 from nami_core.runtime.queue.jobs_dao import JobsDAO
 from nami_core.runtime.queue.redis_stream import EVENT_STREAM, RedisStream
+from nami_core.runtime.queue.safety_gate import SafetyRejection, safe_enqueue
 from nami_core.runtime.queue.types import JobBudget, JobMessage
 from nami_core.runtime.queue.ulid import generate_ulid
 
@@ -375,7 +376,7 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
                 enqueued_at=datetime.now(timezone.utc).isoformat(),
                 attempt=1,
             )
-            app.state.job_stream.enqueue(message)
+            safe_enqueue(app.state.job_stream, message)
             app.state.job_stream.publish_event("job.queued", {"job_id": job_id, "action": action_name, "trace_id": trace_id})
             return job_id, False, "queued"
 
