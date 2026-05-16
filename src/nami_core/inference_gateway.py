@@ -13,7 +13,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel
 
-from nami_core.runtime.obs import cost_span
+from nami_core.runtime.obs import cost_span, record_cost_metric
 from nami_core.runtime.obs.pricing import estimate_cost_usd
 
 
@@ -171,6 +171,7 @@ class InferenceGateway:
             span.set_attribute("tokens.out", tokens_out)
             span.set_attribute("cost.usd", cost_usd)
             span.set_attribute("latency.ms", latency_ms)
+            record_cost_metric("inference", request.model, cost_usd=cost_usd, tokens_in=tokens_in, tokens_out=tokens_out)
             return InferenceResponse(
                 content=content,
                 model_used=model_used,

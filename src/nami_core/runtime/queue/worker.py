@@ -14,7 +14,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from nami_core.hermes import Hermes
-from nami_core.runtime.obs import configure_otel, cost_span
+from nami_core.runtime.obs import configure_otel, cost_span, record_cost_metric
 from nami_core.runtime.queue.jobs_dao import JobsDAO
 from nami_core.runtime.queue.redis_stream import RedisStream
 from nami_core.runtime.queue.types import JobMessage, TaskInput, TaskOutput
@@ -209,6 +209,12 @@ class QueueWorker:
                     span.set_attribute("tokens.used", int(output.get("tokens_used") or 0))
                 if "cost_usd" in output:
                     span.set_attribute("cost.usd", float(output.get("cost_usd") or 0.0))
+                record_cost_metric(
+                    "worker",
+                    message.action,
+                    cost_usd=float(output.get("cost_usd") or 0.0),
+                    tokens_out=int(output.get("tokens_used") or 0),
+                )
             return output
 
     def _handle_mismatch(self, msg_id: str, message: JobMessage) -> None:
