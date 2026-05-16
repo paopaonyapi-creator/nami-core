@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Nami Runtime
+    orgId: 1
+    folder: Nami
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
