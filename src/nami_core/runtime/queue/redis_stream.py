@@ -98,7 +98,10 @@ class RedisStream:
     def autoclaim(self, group: str, consumer: str, *, stream: str = JOB_STREAM) -> list[tuple[str, dict[str, str]]]:
         client = self._get_client()
         try:
-            _, messages = client.xautoclaim(stream, group, consumer, CLAIM_TIMEOUT_MS, "0-0")
+            # redis-py 4.x returned (cursor, messages); 5.0+ returns
+            # (cursor, messages, deleted). Index slice handles both.
+            result = client.xautoclaim(stream, group, consumer, CLAIM_TIMEOUT_MS, "0-0")
+            messages = result[1] if isinstance(result, (list, tuple)) and len(result) >= 2 else []
         except AttributeError:
             return self._claim_pending_fallback(client, group, consumer, stream)
         return [(msg_id, fields) for msg_id, fields in messages]
