@@ -63,10 +63,14 @@ class EchoPlanner:
 
 def agent_worker(payload: dict[str, Any]) -> dict[str, Any]:
     """Dispatch entry point invoked by `QueueWorker._execute_task`."""
-    action = payload.get("action", "run")
+    # `_build_task_payload` injects the full action name (e.g. "agent.run").
+    # Hermes also injects bare action ("run") via Hermes.dispatch.
+    # Accept both shapes by stripping any "<worker>." prefix.
+    raw = str(payload.get("action") or "run")
+    action = raw.split(".", 1)[1] if "." in raw else raw
     if action == "run":
         return _run(payload)
-    return {"error": f"unknown action: {action}"}
+    return {"error": f"unknown action: {raw}"}
 
 
 def _select_planner():
