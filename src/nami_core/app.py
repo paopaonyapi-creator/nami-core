@@ -19,7 +19,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, 
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from nami_core.inference_gateway import InferenceGateway, InferenceRequest
+from nami_core.inference_gateway import InferenceGateway, InferenceRequest, inference_metrics_prometheus_lines
 from nami_core.mcp_client import McpClientError, McpClientManager
 from nami_core.mcp_config import McpConfig, load_mcp_config
 from nami_core.runtime_v2 import (
@@ -165,6 +165,7 @@ class Metrics:
         lines.extend(BridgeMetrics.prometheus_lines())
         lines.extend(cost_metrics_prometheus_lines())
         lines.extend(safety_metrics_prometheus_lines())
+        lines.extend(inference_metrics_prometheus_lines())
         return "\n".join(lines) + "\n"
 
 
