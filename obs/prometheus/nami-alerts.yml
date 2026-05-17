@@ -1,0 +1,182 @@
+# Nami OS — Production Alert Rules
+# Deploy: copy to /etc/prometheus/rules/nami-alerts.yml on VPS
+# Reload: curl -X POST http://localhost:9090/-/reload
+
+groups:
+  # ─── Safety Detectors ───────────────────────────────────────
+  - name: nami_safety
+    interval: 30s
+    rules:
+      - alert: SafetyDetectorFired
+        expr: increase(nami_safety_detection_total{pattern!="none"}[5m]) > 0
+        for: 0s
+        labels:
+          severity: critical
+          team: nami-ops
+        annotations:
+          summary: "Safety detector fired: {{ $labels.pattern }}"
+          description: "Detector {{ $labels.pattern }} triggered action={{ $labels.action_taken }}, count={{ $value }}"
+
+      - alert: SafetyHaltActive
+        expr: nami_safety_detection_total{action_taken=~"halt_branch|halt_action|halt_role"} > 0
+        for: 0s
+        labels:
+          severity: critical
+          team: nami-ops
+        annotations:
+          summary: "HALT active: {{ $labels.pattern }}"
+          description: "A halt-level detector has fired. Agent processing may be stopped."
+
+  # ─── DLQ (Dead Letter Queue) ────────────────────────────────
+  - name: nami_dlq
+    interval: 60s
+    rules:
+      - alert: DLQDepthWarning
+        expr: redis_stream_length{stream="nami:jobs:dead"} > 3
+        for: 5m
+        labels:
+          severity: warning
+          team: nami-ops
+        annotations:
+          summary: "DLQ has {{ $value }} dead jobs"
+          description: "Dead letter queue depth exceeded warning threshold. Inspect with: redis-cli xrange nami:jobs:dead - + COUNT 10"
+
+      - alert: DLQDepthCritical
+        expr: redis_stream_length{stream="nami:jobs:dead"} > 10
+        for: 2m
+        labels:
+          severity: critical
+          team: nami-ops
+        annotations:
+          summary: "DLQ critical: {{ $value }} dead jobs"
+          description: "Dead letter queue depth is critically high. Immediate inspection required."
+
+  # ─── Worker Heartbeat ───────────────────────────────────────
+  - name: nami_workers
+    interval: 30s
+    rules:
+      - alert: WorkerHeartbeatMissing
+        expr: time() - nami_worker_last_heartbeat_seconds > 120
+        for: 2m
+        labels:
+          severity: warning
+          team: nami-ops
+        annotations:
+          summary: "Worker {{ $labels.worker }} heartbeat missing > 2m"
+          description: "Worker {{ $labels.worker }} has not sent a heartbeat in {{ $value | humanizeDuration }}."
+
+      - alert: WorkerDown
+        expr: up{job="nami-core"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: nami-ops
+        annotations:
+          summary: "nami-core target DOWN"
+          description: "Prometheus cannot scrape nami-core :8092. Service may be crashed."
+
+  # ─── P95 Latency ────────────────────────────────────────────
+  - name: nami_latency
+    interval: 30s
+    rules:
+      - alert: InferenceP95LatencyHigh
+        expr: nami_inference_latency_p95_ms > 30000
+        for: 5m
+        labels:
+          severity: warning
+          team: nami-ops
+        annotations:
+          summary: "Inference p95 latency {{ $value }}ms > 30s"
+          description: "LLM inference p95 latency is above 30 seconds for 5 minutes."
+
+      - alert: InferenceP95LatencyCritical
+        expr: nami_inference_latency_p95_ms > 60000
+        for: 2m
+        labels:
+          severity: critical
+          team: nami-ops
+        annotations:
+          summary: "Inference p95 latency CRITICAL: {{ $value }}ms"
+          description: "LLM inference p95 latency is above 60 seconds."
+
+  # ─── Cost / Hour ────────────────────────────────────────────
+  - name: nami_cost
+    interval: 60s
+    rules:
+      - alert: InferenceCostPerHourHigh
+        expr: increase(nami_inference_cost_usd_total[1h]) > 5
+        for: 0s
+        labels:
+          severity: warning
+          team: nami-ops
+        annotations:
+          summary: "Inference cost ${{ $value | printf \"%.2f\" }}/hour"
+          description: "Hourly inference cost exceeds $5. Check for runaway agent loops."
+
+      - alert: InferenceCostPerHourCritical
+        expr: increase(nami_inference_cost_usd_total[1h]) > 15
+        for: 0s
+        labels:
+          severity: critical
+          team: nami-ops
+        annotations:
+          summary: "COST ALERT: ${{ $value | printf \"%.2f\" }}/hour"
+          description: "Hourly cost exceeds $15. Possible runaway loop. Consider /admin/halt."
+
+  # ─── Service Health ─────────────────────────────────────────
+  - name: nami_services
+    interval: 60s
+    rules:
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: nami-ops
+        annotations:
+          summary: "PostgreSQL is DOWN"
+          description: "PostgreSQL is unreachable. All job persistence is affected."
+
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: nami-ops
+        annotations:
+          summary: "Redis is DOWN"
+          description: "Redis is unreachable. Job dispatch and DLQ are affected."
+
+      - alert: HighDiskUsage
+        expr: (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          team: nami-ops
+        annotations:
+          summary: "Disk usage {{ $value | printf \"%.0f\" }}%"
+          description: "Root filesystem usage above 85%. Consider cleanup."
+
+      - alert: HighMemoryUsage
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          team: nami-ops
+        annotations:
+          summary: "Memory usage {{ $value | printf \"%.0f\" }}%"
+          description: "RAM usage above 90%. Possible OOM risk."
+
+  # ─── Stuck Jobs ─────────────────────────────────────────────
+  - name: nami_jobs
+    interval: 120s
+    rules:
+      - alert: StuckJobsDetected
+        expr: nami_jobs_running_older_than_2h > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: nami-ops
+        annotations:
+          summary: "{{ $value }} stuck jobs (running > 2h)"
+          description: "Jobs stuck in running state. Reconciler should auto-recover. Check journalctl -u nami-reconciler."

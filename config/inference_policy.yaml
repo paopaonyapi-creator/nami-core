@@ -1,3 +1,20 @@
+# ═══════════════════════════════════════════════════════════════
+# INFERENCE POLICY — Production Safety Controls
+# ═══════════════════════════════════════════════════════════════
+# enabled:        false → blocks ALL LLM calls (hard kill-switch)
+# dry_run:        true  → logs requests, returns stub (no API spend)
+# max_concurrent: 3     → max parallel API calls (semaphore)
+#
+# ROLLOUT ORDER:
+#   1. enabled: false, dry_run: true    ← current (burn-in)
+#   2. enabled: true,  dry_run: true    ← test planner, no spend
+#   3. enabled: true,  dry_run: false   ← real traffic, guarded
+# ═══════════════════════════════════════════════════════════════
+
+enabled: true
+dry_run: true
+max_concurrent: 3
+
 routes:
   - pattern: "ollama:*"
     backend: "http://127.0.0.1:11434/v1/chat/completions"
@@ -21,3 +38,4 @@ cache:
   enabled: true
   ttl_seconds: 86400
   only_temperature_zero: true
+

@@ -1,0 +1,47 @@
+# Nami OS — Alertmanager Config (Telegram delivery)
+# Deploy: copy to /etc/alertmanager/alertmanager.yml on VPS
+# Reload: systemctl reload prometheus-alertmanager
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: nami-telegram
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  routes:
+    # Critical alerts → immediate, no grouping delay
+    - match:
+        severity: critical
+      receiver: nami-telegram-critical
+      group_wait: 10s
+      repeat_interval: 1h
+
+    # Warning alerts → batched
+    - match:
+        severity: warning
+      receiver: nami-telegram
+      group_wait: 2m
+      repeat_interval: 4h
+
+receivers:
+  - name: nami-telegram
+    webhook_configs:
+      - url: 'http://127.0.0.1:9087/alert'
+        send_resolved: true
+
+  - name: nami-telegram-critical
+    webhook_configs:
+      - url: 'http://127.0.0.1:9087/alert'
+        send_resolved: true
+
+# Inhibit warnings when critical is already firing for same alert
+inhibit_rules:
+  - source_match:
+      severity: critical
+    target_match:
+      severity: warning
+    equal: ['alertname']
