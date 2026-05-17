@@ -304,7 +304,12 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
     app.state.inference_gateway = InferenceGateway()
     app.state.jobs_dao = JobsDAO()
     app.state.job_stream = RedisStream()
-    app.state.queue_actions = {"lottery.backtest_v6"}
+    # Queue actions: comma-separated env override; fallback to lottery only.
+    _queue_actions_env = os.environ.get("NAMI_QUEUE_ACTIONS", "").strip()
+    if _queue_actions_env:
+        app.state.queue_actions = {a.strip() for a in _queue_actions_env.split(",") if a.strip()}
+    else:
+        app.state.queue_actions = {"lottery.backtest_v6"}
     app.state.sync_fallback_enabled = os.environ.get("NAMI_SYNC_FALLBACK", "1") != "0"
 
     @app.on_event("shutdown")
