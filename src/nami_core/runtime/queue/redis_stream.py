@@ -39,7 +39,10 @@ class RedisStream:
             client = redis.Redis.from_url(
                 self.url,
                 decode_responses=True,
-                socket_timeout=2,
+                # socket_timeout MUST exceed BLOCK_MS (xreadgroup block window),
+                # else the client raises SocketTimeout while Redis is still
+                # legitimately blocking. Add 5s headroom.
+                socket_timeout=max(2, (BLOCK_MS // 1000) + 5),
                 socket_connect_timeout=2,
             )
             client.ping()
