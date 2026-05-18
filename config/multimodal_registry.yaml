@@ -1,0 +1,22 @@
+pipelines:
+  generate_image:
+    description: "Generate an image using a text-to-image model via inference gateway"
+    steps:
+      - name: "prompt_enrichment"
+        action: "inference_gateway.chat"
+        system_prompt: "You are an expert prompt engineer. Enhance the user's image prompt."
+        input_keys: ["prompt"]
+        output_keys: ["enriched_prompt"]
+      
+      - name: "image_generation"
+        action: "inference_gateway.image"
+        input_keys: ["enriched_prompt"]
+        output_keys: ["image_url"]
+
+  text_to_speech:
+    description: "Convert text to audio via cloud API"
+    steps:
+      - name: "audio_generation"
+        action: "inference_gateway.audio"
+        input_keys: ["text"]
+        output_keys: ["audio_url"]

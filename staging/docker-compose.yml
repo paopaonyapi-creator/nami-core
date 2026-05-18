@@ -1,0 +1,53 @@
+version: '3.8'
+services:
+  nami-core-staging:
+    image: nami-core:latest # Reuses prod image, but runs in staging schema
+    container_name: nami-core-staging
+    restart: unless-stopped
+    environment:
+      - NAMI_ENV=staging
+      - NAMI_DB_NAME=nami_staging # Explicitly use the staging schema/db
+      # Use same DB host, but different DB name per Phase 34 "separate stack on nami_staging schema"
+      # But wait, it says "Sharing services (DB, Redis) between prod and staging -> Forbidden"
+      # So we need a separate DB container for staging!
+    depends_on:
+      - staging-db
+      - staging-redis
+
+  nami-os-staging:
+    image: nami-os:latest
+    container_name: nami-os-staging
+    restart: unless-stopped
+    environment:
+      - NEXT_PUBLIC_STAGING=1
+      - NEXT_PUBLIC_API_URL=http://nami-core-staging:8000
+    ports:
+      - "3001:3000"
+    depends_on:
+      - nami-core-staging
+
+  staging-db:
+    image: pgvector/pgvector:pg15
+    container_name: nami-staging-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nami_staging
+      POSTGRES_PASSWORD: staging_password
+      POSTGRES_DB: nami_staging
+    volumes:
+      - staging-db-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432" # Bind to different port to not conflict with prod DB
+
+  staging-redis:
+    image: redis:7-alpine
+    container_name: nami-staging-redis
+    restart: unless-stopped
+    volumes:
+      - staging-redis-data:/data
+    ports:
+      - "6380:6379"
+
+volumes:
+  staging-db-data:
+  staging-redis-data:
