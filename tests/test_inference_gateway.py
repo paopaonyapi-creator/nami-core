@@ -42,8 +42,15 @@ def _server_url() -> tuple[str, ThreadingHTTPServer]:
 
 def _policy_file(tmp_path, backend: str):
     path = tmp_path / "inference_policy.yaml"
+    # Tests target a real local HTTP fake (`_ChatHandler`), so we explicitly
+    # opt in to the production feature flags that production keeps off by
+    # default (Gate 4 rollout). Production policy must remain enabled=false +
+    # dry_run=true until the operator flips them; this only relaxes the
+    # in-memory test policy.
     path.write_text(
         f"""
+enabled: true
+dry_run: false
 routes:
   - pattern: "test:*"
     backend: "{backend}"

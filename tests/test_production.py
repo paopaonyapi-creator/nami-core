@@ -39,25 +39,39 @@ def test_cache_memory_flush() -> None:
     assert len(_memory_cache) == 0
 
 def test_cache_stats_memory() -> None:
-    from nami_core.cache import stats, _memory_cache, _redis_client
+    from nami_core.cache import stats, _memory_cache
     _memory_cache.clear()
-    # Force memory backend
+    # Force memory backend by clearing both the cached client AND the
+    # captured REDIS_URL — CI environments may set NAMI_REDIS_URL which
+    # is read at module import, so resetting the client alone reconnects.
     import nami_core.cache as mod
     old_client = mod._redis_client
+    old_url = mod.REDIS_URL
     mod._redis_client = None
+    mod.REDIS_URL = ""
     try:
         s = stats()
         assert s["backend"] == "memory"
     finally:
         mod._redis_client = old_client
+        mod.REDIS_URL = old_url
 
 def test_cache_redis_fallback() -> None:
     from nami_core.cache import _get_redis
-    # No REDIS_URL set → should return None
-    os.environ.pop("NAMI_REDIS_URL", None)
+    # No REDIS_URL set → should return None.
+    # Patch the cached module-global URL too — pop on os.environ alone
+    # is insufficient because cache.py reads it once at import time.
     import nami_core.cache as mod
+    os.environ.pop("NAMI_REDIS_URL", None)
+    old_client = mod._redis_client
+    old_url = mod.REDIS_URL
     mod._redis_client = None
-    assert _get_redis() is None
+    mod.REDIS_URL = ""
+    try:
+        assert _get_redis() is None
+    finally:
+        mod._redis_client = old_client
+        mod.REDIS_URL = old_url
 
 
 # === Production Endpoints (via TestClient) ===

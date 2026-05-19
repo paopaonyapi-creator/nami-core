@@ -22,10 +22,12 @@
     {
       "title": "Cost Estimate (USD)",
       "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 },
       "id": 1,
       "targets": [
         {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "sum(nami_inference_cost_estimate_usd)",
           "refId": "A"
         }
@@ -57,10 +59,12 @@
     {
       "title": "Total Requests",
       "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 },
       "id": 2,
       "targets": [
         {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "sum(nami_inference_requests_total)",
           "refId": "A"
         }
@@ -74,10 +78,12 @@
     {
       "title": "Average Latency (Seconds)",
       "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
       "id": 3,
       "targets": [
         {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "avg(nami_inference_latency_seconds_avg)",
           "refId": "A"
         }
@@ -99,14 +105,17 @@
     {
       "title": "Failures & Timeouts",
       "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
       "id": 4,
       "targets": [
         {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "sum(nami_inference_failures_total) OR vector(0)",
           "refId": "A"
         },
         {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "sum(nami_inference_timeout_total) OR vector(0)",
           "refId": "B"
         }
@@ -126,10 +135,12 @@
     {
       "title": "Cost Over Time",
       "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 10, "w": 12, "x": 0, "y": 8 },
       "id": 5,
       "targets": [
         {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "nami_inference_cost_estimate_usd",
           "legendFormat": "{{model}}",
           "refId": "A"
@@ -144,10 +155,12 @@
     {
       "title": "Latency Over Time",
       "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 10, "w": 12, "x": 12, "y": 8 },
       "id": 6,
       "targets": [
         {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "nami_inference_latency_seconds_avg",
           "legendFormat": "{{model}}",
           "refId": "A"

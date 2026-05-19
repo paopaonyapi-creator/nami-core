@@ -10,6 +10,16 @@ from nami_core.runtime.queue.redis_stream import EVENT_STREAM, RedisStream
 from nami_core.runtime.queue.types import JobBudget, JobMessage
 
 
+def _redis_url(container) -> str:
+    """Compat shim: testcontainers>=4.10 dropped get_connection_url()."""
+    legacy = getattr(container, "get_connection_url", None)
+    if callable(legacy):
+        return legacy()
+    host = container.get_container_host_ip()
+    port = container.get_exposed_port(6379)
+    return f"redis://{host}:{port}/0"
+
+
 def _sample_message() -> JobMessage:
     return JobMessage(
         id="01HZZZFAKEJOB000000000000",
@@ -26,7 +36,7 @@ def _sample_message() -> JobMessage:
 
 def test_enqueue_and_read_group():
     with RedisContainer("redis:7-alpine") as redis:
-        stream = RedisStream(redis.get_connection_url())
+        stream = RedisStream(_redis_url(redis))
         stream.ensure_group("workers")
         message = _sample_message()
         stream.enqueue(message)
@@ -41,7 +51,7 @@ def test_enqueue_and_read_group():
 
 def test_publish_event_stream():
     with RedisContainer("redis:7-alpine") as redis:
-        stream = RedisStream(redis.get_connection_url())
+        stream = RedisStream(_redis_url(redis))
         stream.ensure_group("sse-bridge", stream=EVENT_STREAM)
         stream.publish_event("job.queued", {"job_id": "job-1"})
 
