@@ -25,8 +25,10 @@ def _redis_url(container) -> str:
 
 def test_backtest_dispatch_queues_job(monkeypatch):
     with RedisContainer("redis:7-alpine") as redis, PostgresContainer("postgres:15-alpine") as postgres:
+        # driver=None strips `+psycopg2` so psycopg3 can parse the URL.
+        pg_dsn = postgres.get_connection_url(driver=None)
         monkeypatch.setenv("NAMI_REDIS_URL", _redis_url(redis))
-        monkeypatch.setenv("NAMI_JOBS_DSN", postgres.get_connection_url())
+        monkeypatch.setenv("NAMI_JOBS_DSN", pg_dsn)
         monkeypatch.setenv("NAMI_JOBS_AUTO_DDL", "1")
         monkeypatch.setenv("NAMI_SYNC_FALLBACK", "0")
 
@@ -46,7 +48,7 @@ def test_backtest_dispatch_queues_job(monkeypatch):
             job_id = body.get("job_id")
             assert job_id
 
-        dao = JobsDAO(dsn=postgres.get_connection_url())
+        dao = JobsDAO(dsn=pg_dsn)
         job = dao.get_by_id(job_id)
         assert job is not None
         assert job["status"] == "queued"

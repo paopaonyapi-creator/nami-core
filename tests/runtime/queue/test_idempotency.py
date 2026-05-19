@@ -18,7 +18,9 @@ def test_idempotency_key_stable_for_payload_order():
 
 def test_idempotency_returns_existing_job():
     with PostgresContainer("postgres:15-alpine") as postgres:
-        dao = JobsDAO(dsn=postgres.get_connection_url())
+        # driver=None drops the `+psycopg2` suffix that confuses psycopg3.
+        dsn = postgres.get_connection_url(driver=None)
+        dao = JobsDAO(dsn=dsn)
         dao.ensure_schema()
 
         job_id = generate_ulid()
