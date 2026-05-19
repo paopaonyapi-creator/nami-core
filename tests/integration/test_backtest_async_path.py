@@ -13,9 +13,19 @@ from nami_core.runtime.queue.jobs_dao import JobsDAO
 from nami_core.scheduler import build_core
 
 
+def _redis_url(container) -> str:
+    """Compat shim: testcontainers>=4.10 dropped get_connection_url()."""
+    legacy = getattr(container, "get_connection_url", None)
+    if callable(legacy):
+        return legacy()
+    host = container.get_container_host_ip()
+    port = container.get_exposed_port(6379)
+    return f"redis://{host}:{port}/0"
+
+
 def test_backtest_dispatch_queues_job(monkeypatch):
     with RedisContainer("redis:7-alpine") as redis, PostgresContainer("postgres:15-alpine") as postgres:
-        monkeypatch.setenv("NAMI_REDIS_URL", redis.get_connection_url())
+        monkeypatch.setenv("NAMI_REDIS_URL", _redis_url(redis))
         monkeypatch.setenv("NAMI_JOBS_DSN", postgres.get_connection_url())
         monkeypatch.setenv("NAMI_JOBS_AUTO_DDL", "1")
         monkeypatch.setenv("NAMI_SYNC_FALLBACK", "0")

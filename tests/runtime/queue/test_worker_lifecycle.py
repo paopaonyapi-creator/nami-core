@@ -11,6 +11,16 @@ from testcontainers.redis import RedisContainer
 from nami_core.runtime.queue.types import JobBudget, JobMessage
 
 
+def _redis_url(container) -> str:
+    """Compat shim: testcontainers>=4.10 dropped get_connection_url()."""
+    legacy = getattr(container, "get_connection_url", None)
+    if callable(legacy):
+        return legacy()
+    host = container.get_container_host_ip()
+    port = container.get_exposed_port(6379)
+    return f"redis://{host}:{port}/0"
+
+
 def test_autoclaim_reclaims_pending(monkeypatch):
     monkeypatch.setenv("NAMI_JOB_CLAIM_TIMEOUT_MS", "100")
     import nami_core.runtime.queue.redis_stream as redis_stream
@@ -18,7 +28,7 @@ def test_autoclaim_reclaims_pending(monkeypatch):
     importlib.reload(redis_stream)
 
     with RedisContainer("redis:7-alpine") as redis:
-        stream = redis_stream.RedisStream(redis.get_connection_url())
+        stream = redis_stream.RedisStream(_redis_url(redis))
         stream.ensure_group("workers")
         message = JobMessage(
             id="01HZZZFAKEJOB000000000001",
