@@ -49,6 +49,19 @@ logger = logging.getLogger("nami_core.app")
 
 AUDIT_DB = os.environ.get("NAMI_AUDIT_DB", "/tmp/nami_audit.db")
 
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def mcp_read_only_gate_enabled() -> bool:
+    """Keep MCP invocations informational until the rollout gate explicitly opens writes."""
+
+    return _env_flag("NAMI_MCP_READ_ONLY_GATE", default=True)
+
 def _audit_log(worker: str, action: str, caller_ip: str, ok: bool, latency_ms: float) -> None:
     try:
         conn = sqlite3.connect(AUDIT_DB)
@@ -632,6 +645,8 @@ def create_app(hermes: Any = None, scheduler: Any = None, api_key: str = "") -> 
         if tool is None:
             raise HTTPException(status_code=404, detail=f"MCP tool not registered: {req.tool}")
         metadata = tool.to_metadata()
+        if mcp_read_only_gate_enabled() and not metadata.read_only:
+            raise HTTPException(status_code=403, detail="MCP read-only gate active")
         authenticated = False
         if app.state.api_key:
             key = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization

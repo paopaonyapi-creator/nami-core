@@ -503,6 +503,103 @@ servers:
         assert response.json()["detail"] == "api key required"
 
 
+def test_runtime_mcp_mutating_tool_blocked_by_read_only_gate(tmp_path, monkeypatch):
+    server_script = tmp_path / "mock_mcp_server.py"
+    server_script.write_text(
+        """
+import json
+import sys
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if "id" not in msg:
+        continue
+    method = msg.get("method")
+    if method == "tools/list":
+        result = {"tools": [{"name": "write_file", "description": "Write", "inputSchema": {"type": "object"}}]}
+    elif method == "tools/call":
+        result = {"content": [{"type": "text", "text": "wrote"}], "isError": False}
+    else:
+        result = {}
+    print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result}), flush=True)
+""",
+        encoding="utf-8",
+    )
+    config_file = tmp_path / "mcp.yaml"
+    config_file.write_text(
+        f"""
+servers:
+  - name: mutating_tools
+    transport: stdio
+    command: {sys.executable}
+    args:
+      - {server_script}
+    tool_prefix: mcp.mutating
+    permission_level: mutating
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAMI_MCP_CONFIG_FILE", str(config_file))
+
+    with _client() as client:
+        response = client.post(
+            "/runtime/mcp/tools/invoke",
+            headers={"Authorization": "Bearer test-key"},
+            json={"tool": "mcp.mutating.write_file", "payload": {}, "approved": True},
+        )
+        assert response.status_code == 403
+        assert response.json()["detail"] == "MCP read-only gate active"
+
+
+def test_runtime_mcp_mutating_tool_can_be_opened_after_gate(tmp_path, monkeypatch):
+    server_script = tmp_path / "mock_mcp_server.py"
+    server_script.write_text(
+        """
+import json
+import sys
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if "id" not in msg:
+        continue
+    method = msg.get("method")
+    if method == "tools/list":
+        result = {"tools": [{"name": "write_file", "description": "Write", "inputSchema": {"type": "object"}}]}
+    elif method == "tools/call":
+        result = {"content": [{"type": "text", "text": "wrote"}], "isError": False}
+    else:
+        result = {}
+    print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result}), flush=True)
+""",
+        encoding="utf-8",
+    )
+    config_file = tmp_path / "mcp.yaml"
+    config_file.write_text(
+        f"""
+servers:
+  - name: mutating_tools
+    transport: stdio
+    command: {sys.executable}
+    args:
+      - {server_script}
+    tool_prefix: mcp.mutating
+    permission_level: mutating
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAMI_MCP_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("NAMI_MCP_READ_ONLY_GATE", "false")
+
+    with _client() as client:
+        response = client.post(
+            "/runtime/mcp/tools/invoke",
+            headers={"Authorization": "Bearer test-key"},
+            json={"tool": "mcp.mutating.write_file", "payload": {}, "approved": True},
+        )
+        assert response.status_code == 200
+        assert response.json()["output"]["content"][0]["text"] == "wrote"
+
+
 def test_runtime_mcp_sse_discovers_and_invokes_tools(tmp_path, monkeypatch):
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     import json

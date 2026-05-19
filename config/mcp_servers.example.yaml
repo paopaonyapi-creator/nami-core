@@ -1,4 +1,6 @@
 servers:
+  # Keep NAMI_MCP_READ_ONLY_GATE=true until the controlled rollout gate opens
+  # write-capable MCP tools. Prefer read_only/protected_read during validation.
   - name: local_tools
     transport: stdio
     command: node

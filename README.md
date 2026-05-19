@@ -125,6 +125,7 @@ Rate limits (per-IP, sliding 60-second window) are tunable through environment v
 - `NAMI_READ_RATE_LIMIT_PER_MIN` (default `120`) — read endpoints (`/workers`, `/runtime/tools`, `/runtime/mcp/*`).
 - `NAMI_DISPATCH_RATE_LIMIT_PER_MIN` (default `60`) — `/dispatch` and `/dispatch/batch` requests.
 - `NAMI_DISPATCH_RATE_LIMIT` (default `30`) — per-worker cap for any single worker.
+- `NAMI_MCP_READ_ONLY_GATE` (default `true`) ? blocks MCP tools marked non-read-only even when an API key and approval flag are present. Set to `false` only after the controlled rollout gate explicitly opens write-capable MCP tools.
 
 Runtime diagnostics can be controlled with `NAMI_RUNTIME_DIAGNOSTIC_CHECKS`:
 
